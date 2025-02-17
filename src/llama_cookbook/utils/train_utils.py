@@ -225,7 +225,7 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
             if train_config.save_metrics:
                 val_step_loss.extend(temp_val_loss)
                 val_step_perplexity.extend(temp_step_perplexity)
-            should_save_model = train_config.save_model and eval_epoch_loss < best_val_loss
+            should_save_model = train_config.save_model # and eval_epoch_loss < best_val_loss
         
         checkpoint_start_time = time.perf_counter()
         if should_save_model:
@@ -237,7 +237,7 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
                         print(f"we are about to save the PEFT modules")
                 else:
                     print(f"we are about to save the PEFT modules")
-                save_peft_checkpoint(model, train_config.output_dir)
+                save_peft_checkpoint(model, train_config.output_dir, tokenizer)
                 if train_config.enable_fsdp:
                     if rank==0:
                         print(f"PEFT modules are saved in {train_config.output_dir} directory")

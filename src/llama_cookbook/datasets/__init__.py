@@ -8,12 +8,14 @@ from llama_cookbook.datasets.alpaca_dataset import InstructionDataset as get_alp
 from llama_cookbook.datasets.custom_dataset import get_custom_dataset,get_data_collator
 from llama_cookbook.datasets.samsum_dataset import get_preprocessed_samsum as get_samsum_dataset
 from llama_cookbook.datasets.toxicchat_dataset import get_llamaguard_toxicchat_dataset as get_llamaguard_toxicchat_dataset
+from llama_cookbook.datasets.dataset_5g import get_5g_dataset as get_5g_dataset
 DATASET_PREPROC = {
     "alpaca_dataset": partial(get_alpaca_dataset),
     "grammar_dataset": get_grammar_dataset,
     "samsum_dataset": get_samsum_dataset,
     "custom_dataset": get_custom_dataset,
     "llamaguard_toxicchat_dataset": get_llamaguard_toxicchat_dataset,
+    "open5gs_dataset": get_5g_dataset,
 }
 DATALOADER_COLLATE_FUNC = {
     "custom_dataset": get_data_collator

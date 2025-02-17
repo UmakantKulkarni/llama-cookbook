@@ -267,7 +267,7 @@ def load_sharded_model_single_gpu(model,model_path):
     print(f"Sharded state checkpoint loaded from {model_path}")
     return model
 
-def save_peft_checkpoint(model, model_path):
+def save_peft_checkpoint(model, model_path, tokenizer = None):
     """save_pretrained peft model"""
 
     options = StateDictOptions(full_state_dict=True, cpu_offload=True)
@@ -275,6 +275,8 @@ def save_peft_checkpoint(model, model_path):
     if isinstance(model, FSDP):
         state_dict = get_model_state_dict(model, options=options)
         model.save_pretrained(model_path, state_dict=state_dict)
+        if tokenizer:
+            tokenizer.save_pretrained(model_path)
     else:
         model.save_pretrained(model_path)
     
