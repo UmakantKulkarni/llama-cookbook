@@ -31,7 +31,7 @@ class train_config:
     dataset = "open5gs_dataset"
     peft_method: str = "lora" # None, llama_adapter (Caution: llama_adapter is currently not supported with FSDP)
     use_peft: bool=True # use parameter efficient fine tuning
-    from_peft_checkpoint: str="/opt/llama-cookbook/output/fine_tuned" # if not empty and use_peft=True, will load the peft checkpoint and resume the fine-tuning on that checkpoint
+    from_peft_checkpoint: str="" # if not empty and use_peft=True, will load the peft checkpoint and resume the fine-tuning on that checkpoint
     output_dir: str = "/opt/llama-cookbook/output"
     freeze_layers: bool = False
     num_freeze_layers: int = 1
