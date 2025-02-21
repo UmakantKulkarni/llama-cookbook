@@ -42,6 +42,6 @@ class llamaguard_toxicchat_dataset:
 @dataclass
 class open5gs_dataset:
     dataset: str = "open5gs_dataset"
-    train_split: str = "train[:1%]"
-    val_split: str = "train[1%:2%]"
-    test_split: str = "train[2%:3%]"
+    train_split: str = "train[:70%]"
+    val_split: str = "train[70%:85%]"
+    test_split: str = "train[85%:100%]"
