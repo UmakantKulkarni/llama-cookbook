@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 @dataclass
 class train_config:
-    model_name: str="meta-llama/Llama-3.2-1B-Instruct"
+    model_name: str="meta-llama/Llama-3.2-3B-Instruct"
     tokenizer_name: str=None
     enable_fsdp: bool=True # shards model parameters, optimizer states and gradients across DDP ranks
     low_cpu_fsdp: bool=False # saves cpu memory by loading pretrained model on rank0 only

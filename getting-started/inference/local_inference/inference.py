@@ -17,11 +17,11 @@ from transformers import AutoTokenizer
 
 
 def main(
-    model_name,
-    peft_model: str = None,
+    model_name: str = "meta-llama/Llama-3.2-3B-Instruct",
+    peft_model: str = "/opt/llama-cookbook/output",
     quantization: str = None, # Options: 4bit, 8bit
     max_new_tokens=100,  # The maximum numbers of tokens to generate
-    prompt_file: str = None,
+    prompt_file: str = "open5gs_prompt.txt",  # The file containing the prompt
     seed: int = 42,  # seed value for reproducibility
     do_sample: bool = True,  # Whether or not to use sampling ; use greedy decoding otherwise.
     min_length: int = None,  # The minimum length of the sequence to be generated, input prompt + min_new_tokens
@@ -33,11 +33,11 @@ def main(
     length_penalty: int = 1,  # [optional] Exponential penalty to the length that is used with beam-based generation.
     enable_azure_content_safety: bool = False,  # Enable safety check with Azure content safety api
     enable_sensitive_topics: bool = False,  # Enable check for sensitive topics using AuditNLG APIs
-    enable_salesforce_content_safety: bool = True,  # Enable safety check with Salesforce safety flan t5
+    enable_salesforce_content_safety: bool = False,  # Enable safety check with Salesforce safety flan t5
     enable_llamaguard_content_safety: bool = False,
     max_padding_length: int = None,  # the max padding length to be used with tokenizer padding the prompts.
     use_fast_kernels: bool = False,  # Enable using SDPA from PyTroch Accelerated Transformers, make use Flash Attention and Xformer memory-efficient kernels
-    share_gradio: bool = False,  # Enable endpoint creation for gradio.live
+    share_gradio: bool = True,  # Enable endpoint creation for gradio.live
     **kwargs,
 ):
     # Set the seeds for reproducibility
