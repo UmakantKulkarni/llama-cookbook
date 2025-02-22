@@ -166,7 +166,7 @@ def main(
                     minimum=0, maximum=100, step=1, value=50, label="Top k"
                 ),
                 gr.components.Slider(
-                    minimum=1, maximum=2000, step=1, value=200, label="Max tokens"
+                    minimum=1, maximum=4096, step=1, value=4096, label="Max tokens"
                 ),
             ],
             outputs=[
