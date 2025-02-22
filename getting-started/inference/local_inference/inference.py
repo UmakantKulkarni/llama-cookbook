@@ -20,8 +20,8 @@ def main(
     model_name: str = "meta-llama/Llama-3.2-3B-Instruct",
     peft_model: str = "/opt/llama-cookbook/output",
     quantization: str = None, # Options: 4bit, 8bit
-    max_new_tokens=100,  # The maximum numbers of tokens to generate
-    prompt_file: str = "open5gs_prompt.txt",  # The file containing the prompt
+    max_new_tokens=4096,  # The maximum numbers of tokens to generate
+    prompt_file: str = None, # "open5gs_prompt.txt",  # The file containing the prompt
     seed: int = 42,  # seed value for reproducibility
     do_sample: bool = True,  # Whether or not to use sampling ; use greedy decoding otherwise.
     min_length: int = None,  # The minimum length of the sequence to be generated, input prompt + min_new_tokens
@@ -175,8 +175,8 @@ def main(
                     label="Output",
                 )
             ],
-            title="Meta Llama3 Playground",
-            description="https://github.com/meta-llama/llama-cookbook",
+            title="5G Network Issue Resolution",
+            description="https://github.com/UmakantKulkarni/llama-cookbook",
         ).queue().launch(server_name="0.0.0.0", share=share_gradio)
 
 
