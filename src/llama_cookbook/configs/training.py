@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 @dataclass
 class train_config:
-    model_name: str="meta-llama/Llama-3.2-3B-Instruct"
+    model_name: str="meta-llama/Llama-3.1-8B-Instruct"
     tokenizer_name: str=None
     enable_fsdp: bool=True # shards model parameters, optimizer states and gradients across DDP ranks
     low_cpu_fsdp: bool=False # saves cpu memory by loading pretrained model on rank0 only
@@ -36,7 +36,7 @@ class train_config:
     freeze_layers: bool = False
     num_freeze_layers: int = 1
     freeze_LLM_only: bool = False # Freeze self-attention layers in the language_model. Vision model, multi_modal_projector, cross-attention will be fine-tuned
-    quantization: str = None
+    quantization: str = "4bit"
     one_gpu: bool = False
     save_model: bool = True
     dist_checkpoint_root_folder: str="/opt/llama-cookbook/output" # will be used if using FSDP

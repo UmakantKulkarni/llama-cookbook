@@ -33,30 +33,28 @@ def get_5g_dataset(config, tokenizer, split):
     dataset = dataset.map(
         apply_prompt_template,
         remove_columns=list(dataset.features),
-        num_proc=24,
+        num_proc=64,
         desc="Applying prompt template"
     )
 
     def tokenize_add_label(sample):
-        prompt = tokenizer.encode(
+        processed_prompt = tokenizer(
             tokenizer.bos_token + sample["prompt"],
             add_special_tokens=False,
-            padding="max_length",
-            truncation=True,
-            max_length=512
+            return_tensors="pt"
         )
-        resolution = tokenizer.encode(
+        processed_resolution = tokenizer(
             sample["resolution"] + tokenizer.eos_token,
             add_special_tokens=False,
-            padding="max_length",
-            truncation=True,
-            max_length=512
+            return_tensors="pt"
         )
+        prompt_ids = processed_prompt.input_ids[0].tolist()
+        resolution_ids = processed_resolution.input_ids[0].tolist()
 
         sample = {
-            "input_ids": prompt + resolution,
-            "attention_mask": [1] * (len(prompt) + len(resolution)),
-            "labels": [-100] * len(prompt) + resolution,
+            "input_ids": prompt_ids + resolution_ids,
+            "attention_mask": [1] * (len(prompt_ids) + len(resolution_ids)),
+            "labels": [-100] * len(prompt_ids) + resolution_ids,
         }
 
         return sample
@@ -64,7 +62,7 @@ def get_5g_dataset(config, tokenizer, split):
     dataset = dataset.map(
         tokenize_add_label, 
         remove_columns=list(dataset.features),
-        num_proc=24,
+        num_proc=64,
         desc="Tokenizing dataset"
     )
 
