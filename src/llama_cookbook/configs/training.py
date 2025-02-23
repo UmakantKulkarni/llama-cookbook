@@ -36,7 +36,7 @@ class train_config:
     freeze_layers: bool = False
     num_freeze_layers: int = 1
     freeze_LLM_only: bool = False # Freeze self-attention layers in the language_model. Vision model, multi_modal_projector, cross-attention will be fine-tuned
-    quantization: str = "4bit"
+    quantization: str = None
     one_gpu: bool = False
     save_model: bool = True
     dist_checkpoint_root_folder: str="/opt/llama-cookbook/output" # will be used if using FSDP
