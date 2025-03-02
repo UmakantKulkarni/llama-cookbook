@@ -5,7 +5,7 @@ import torch.nn as nn
 from transformers.models.llama.configuration_llama import LlamaConfig
 from transformers.models.llama.modeling_llama import LlamaRMSNorm, LlamaDecoderLayer, LlamaRotaryEmbedding
 from transformers.models.llama.modeling_llama import LlamaForCausalLM as _LlamaForCausalLM
-from transformers.utils import add_start_docstrings, add_start_docstrings_to_model_forward, replace_return_docstrings, deprecate_kwarg, logging
+from transformers.utils import add_start_docstrings, add_start_docstrings_to_model_forward, replace_return_docstrings, logging
 from transformers.modeling_flash_attention_utils import FlashAttentionKwargs
 from transformers.processing_utils import Unpack
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
@@ -17,7 +17,7 @@ from transformers.models.llama.modeling_llama import LlamaModel as _LlamaModel
 from transformers.models.llama.modeling_llama import LLAMA_INPUTS_DOCSTRING, LLAMA_START_DOCSTRING, _CONFIG_FOR_DOC
 
 from dataclasses import dataclass
-from transformers import DataCollatorMixin
+from transformers import DataCollator
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from transformers.data.data_collator import _torch_collate_batch, _tf_collate_batch, pad_without_fast_tokenizer_warning, _numpy_collate_batch
 
@@ -384,7 +384,7 @@ class FivegLlamaForCausalLM(_LlamaForCausalLM): # Inherit from the original Llam
         self.post_init()
 
     # Modify the forward method to accept and pass fiveg_feature_indices
-    @deprecate_kwarg("num_logits_to_keep", version="4.50", new_name="logits_to_keep")
+    # @deprecate_kwarg("num_logits_to_keep", version="4.50", new_name="logits_to_keep")
     @add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
     def forward(
@@ -448,7 +448,7 @@ class FivegLlamaForCausalLM(_LlamaForCausalLM): # Inherit from the original Llam
         )
 
 @dataclass
-class FivegDataCollatorForLanguageModeling(DataCollatorMixin):
+class FivegDataCollatorForLanguageModeling(DataCollator):
 
     tokenizer: PreTrainedTokenizerBase
     mlm: bool = True
