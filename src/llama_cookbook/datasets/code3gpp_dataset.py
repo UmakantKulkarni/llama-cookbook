@@ -222,19 +222,12 @@ def get_code3gpp_dataset(dataset_config, tokenizer, split: str):
     # -- Load TS3GPP specification data --
     with open(DATASET_JSON_FILE, "r") as f_spec:
         raw_spec_data = json.load(f_spec)
-    df_spec = pd.DataFrame(raw_spec_data)
-    df_spec = df_spec[df_spec["spectype"] == "Technical Specification (TS)"]
-    df_spec = df_spec[df_spec["spectech"].str.contains("LTE|5G", case=False, na=False)]
+    df_spec_all = pd.DataFrame(raw_spec_data)
+    df_spec_all = df_spec_all[df_spec_all["spectype"] == "Technical Specification (TS)"]
+    df_spec = df_spec_all[df_spec_all["technology"].apply(lambda tech_list: any(t in ["5G", "LTE"] for t in tech_list))]
     spec_data = df_spec.to_dict(orient="records")
     for item in spec_data:
         item["type"] = "spec"
-
-    # -- Load Source Code data --
-    with open(SOURCE_CODE_DATASET_JSON_FILE, "r") as f_code:
-        raw_code_data = json.load(f_code)
-    code_data = raw_code_data
-    for item in code_data:
-        item["type"] = "code"
 
     # Example: Build your “protocol” (fiveg) feature vocab from the spec DataFrame
     FIVEG_FEATURE_VOCAB = {
@@ -248,26 +241,52 @@ def get_code3gpp_dataset(dataset_config, tokenizer, split: str):
     print("FiveG (Protocol) feature vocabulary:")
     print(json.dumps(FIVEG_FEATURE_VOCAB, indent=4))
 
-    print("Code feature vocabulary:")
-    print(json.dumps(CODE_FEATURE_VOCAB, indent=4))
+    if 0:
+        # -- Load Source Code data --
+        with open(SOURCE_CODE_DATASET_JSON_FILE, "r") as f_code:
+            raw_code_data = json.load(f_code)
+        code_data = raw_code_data
+        for item in code_data:
+            item["type"] = "code"
 
-    # Combine them
-    combined_data = spec_data + code_data
+        print("Code feature vocabulary:")
+        print(json.dumps(CODE_FEATURE_VOCAB, indent=4))
+
+        # Combine them
+        combined_data = spec_data + code_data
+        random.shuffle(combined_data)
+
+        # Simple 80/20 split
+        split_index = int(len(combined_data) * 0.8)
+        if split == "train":
+            data = combined_data[:split_index]
+        elif split == "test":
+            data = combined_data[split_index:]
+        else:
+            raise ValueError(f"Invalid split: {split} (must be 'train' or 'test').")
+    
+    combined_data = spec_data
     random.shuffle(combined_data)
 
-    # Simple 80/20 split
-    split_index = int(len(combined_data) * 0.8)
+    # Calculate 5% for train and 5% for test
+    train_size = int(len(combined_data) * 0.05)
+    test_size = int(len(combined_data) * 0.05)
+
+    train_data = random.sample(combined_data, train_size)
+    remaining_data = [entry for entry in combined_data if entry not in train_data]
+    test_data = random.sample(remaining_data, test_size)
     if split == "train":
-        data = combined_data[:split_index]
+        data = train_data
     elif split == "test":
-        data = combined_data[split_index:]
+        data = test_data
     else:
         raise ValueError(f"Invalid split: {split} (must be 'train' or 'test').")
 
+    
     dataset = TS3GPPDataset(
         data=data,
         tokenizer=tokenizer,
-        fiveg_feature_vocab=FIVEG_FEATURE_VOCAB,  # renamed param
+        fiveg_feature_vocab=FIVEG_FEATURE_VOCAB,
         code_feature_vocab=CODE_FEATURE_VOCAB
     )
     return dataset
@@ -278,7 +297,7 @@ def get_code3gpp_data_collator(tokenizer, dataset_config):
     Returns either your custom FivegDataCollatorForLanguageModeling
     or the default data collator, depending on the config.
     """
-    if dataset_config.is_purdue_dataset:
+    if dataset_config.is_fiveg_model:
         print("Using Modified Data Collator")
         from llama_cookbook.FivegModel import FivegDataCollatorForLanguageModeling
 

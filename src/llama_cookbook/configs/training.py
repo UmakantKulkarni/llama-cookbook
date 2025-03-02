@@ -6,8 +6,8 @@ from dataclasses import dataclass
 
 @dataclass
 class train_config:
-    model_name: str="meta-llama/Llama-3.1-8B-Instruct"
-    is_purdue_model: bool = False
+    model_name: str="meta-llama/Llama-3.1-8B"
+    is_fiveg_model: bool = True
     tokenizer_name: str=None
     enable_fsdp: bool=True # shards model parameters, optimizer states and gradients across DDP ranks
     low_cpu_fsdp: bool=False # saves cpu memory by loading pretrained model on rank0 only
@@ -29,7 +29,7 @@ class train_config:
     use_fp16: bool=False  # load model paramater in torch.float16 dtype (not recommended)
     mixed_precision: bool=True
     val_batch_size: int=1
-    dataset = "open5gs_dataset"
+    dataset = "code3gpp_dataset"
     peft_method: str = "lora" # None, llama_adapter (Caution: llama_adapter is currently not supported with FSDP)
     use_peft: bool=True # use parameter efficient fine tuning
     from_peft_checkpoint: str="" # if not empty and use_peft=True, will load the peft checkpoint and resume the fine-tuning on that checkpoint

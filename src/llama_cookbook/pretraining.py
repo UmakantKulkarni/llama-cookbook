@@ -64,6 +64,57 @@ from transformers.models.mllama.modeling_mllama import (
     MllamaVisionEncoderLayer,
 )
 from llama_cookbook.FivegModel import FivegLlamaForCausalLM, FivegDataCollatorForLanguageModeling
+CODE_FEATURE_VOCAB = {
+    "filetype": [
+        "config",
+        "src",
+        "test",
+        "deployment",
+    ],
+    "extention": [
+        "c",
+        "h",
+        "py",
+        "yaml",
+        "cfg",
+        "ini",
+        "sh",
+        "perl",
+        "tcl",
+        "yml",
+        "json",
+        "txt",
+        "in",
+        "build",
+        "conf",
+    ],
+    "functionality": [
+        "5g call setup",
+        "handover",
+        "kubernetes deployment",
+        "routing",
+    ],
+    "directory": [
+        "src",
+        "config",
+        "tests",
+        "deploy",
+        "docker",
+    ],
+    "nf": [
+        "amf",
+        "smf",
+        "upf",
+        "all"
+    ],
+    "interface": [
+        "namf",
+        "nsmf",
+        "nudm",
+        "nudr",
+        "management"
+    ]
+}
 
 def setup_wandb(train_config, fsdp_config, **kwargs):
     try:
@@ -161,10 +212,11 @@ def main(**kwargs):
         model.language_model.supports_gradient_checkpointing = True
     elif config.model_type == "llama":
         is_vision = False
-        if config.is_purdue_model:
+        if config.is_fiveg_model:
             model = FivegLlamaForCausalLM.from_pretrained(
                 train_config.model_name,
                 quantization_config=bnb_config,
+                ignore_mismatched_sizes=True,
                 use_cache=use_cache,
                 attn_implementation="sdpa" if train_config.use_fast_kernels else None,
                 device_map=(
@@ -321,10 +373,10 @@ def main(**kwargs):
         elif torch.cuda.is_available():
             model.to("cuda")
     dataset_config = generate_dataset_config(train_config, kwargs)
-    if dataset_config["dataset"] == "ts3gpp_dataset":
-        dataset_config["is_purdue_dataset"] = True
+    if dataset_config["dataset"] == "code3gpp_dataset":
+        dataset_config["is_fiveg_model"] = True
     else:
-        dataset_config["is_purdue_dataset"] = False
+        dataset_config["is_fiveg_model"] = False
     if is_vision:
         dataset_processer = processor
     else:
@@ -367,11 +419,15 @@ def main(**kwargs):
 
     # --- Modified Data Collator ---
     def _custom_data_collator(dataset_processer, dataset_config):
-        if dataset_config.is_purdue_dataset: # Flag to use modified data collator
+        if dataset_config.is_fiveg_model: # Flag to use modified data collator
             print("Using Modified Data Collator")
             return FivegDataCollatorForLanguageModeling(
                 tokenizer=dataset_processer,
-                mlm=False # Set mlm=False for continual pre-training (causal LM)
+                mlm=False, # Set mlm=False for continual pre-training (causal LM)
+                fiveg_feature_vocab_size=2596,  # e.g. from train_dataset.fiveg_feature_size
+                code_feature_vocab=CODE_FEATURE_VOCAB,
+                fiveg_feature_embedding_dim=64,
+                code_feature_embedding_dim=32,
             )
         else:
             print("Using Original Data Collator")
