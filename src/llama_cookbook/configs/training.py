@@ -7,6 +7,7 @@ from dataclasses import dataclass
 @dataclass
 class train_config:
     model_name: str="meta-llama/Llama-3.1-8B-Instruct"
+    is_purdue_model: bool = False
     tokenizer_name: str=None
     enable_fsdp: bool=True # shards model parameters, optimizer states and gradients across DDP ranks
     low_cpu_fsdp: bool=False # saves cpu memory by loading pretrained model on rank0 only

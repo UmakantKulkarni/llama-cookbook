@@ -44,3 +44,11 @@ class open5gs_dataset:
     dataset: str = "open5gs_dataset"
     train_split: str = "train[:80%]"
     test_split: str = "train[80%:100%]"
+
+@dataclass
+class code3gpp_dataset:
+    dataset: str = "code3gpp_dataset"
+    train_split: str = "train"
+    test_split: str = "test"
+    fiveg_feature_vocab_size: int = 100
+    is_purdue_dataset: bool = True
