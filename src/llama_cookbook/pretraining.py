@@ -213,8 +213,13 @@ def main(**kwargs):
     elif config.model_type == "llama":
         is_vision = False
         if config.is_fiveg_model:
+            config.spec_kg_embedding_dim = 64
+            config.code_kg_embedding_dim = 32
+            config.num_spec_features = 2596
+            config.num_code_features = 37
             model = FivegLlamaForCausalLM.from_pretrained(
                 train_config.model_name,
+                config=config,
                 quantization_config=bnb_config,
                 ignore_mismatched_sizes=True,
                 use_cache=use_cache,

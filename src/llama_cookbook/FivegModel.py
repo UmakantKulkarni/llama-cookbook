@@ -26,9 +26,9 @@ logger = logging.get_logger(__name__)
 
 # --- 1. Define Modified Llama Model with Two Fiveg Embedding Layers ---
 class FivegEmbeddingAttentionLayer(nn.Module):
-    def __init__(self, config, kg_embedding_dim): # kg_embedding_dim as argument
+    def __init__(self, config, num_fiveg_features, kg_embedding_dim): # kg_embedding_dim as argument
         super().__init__()
-        self.fiveg_embedding = nn.Embedding(config.num_fiveg_features + 1, kg_embedding_dim) # Use passed kg_embedding_dim
+        self.fiveg_embedding = nn.Embedding(num_fiveg_features + 1, kg_embedding_dim) # Use passed kg_embedding_dim
         self.W_q = nn.Linear(config.hidden_size, kg_embedding_dim, bias=True) # Bias added
         self.W_k = nn.Linear(kg_embedding_dim, kg_embedding_dim, bias=True) # Bias added
         self.W_v = nn.Linear(kg_embedding_dim, kg_embedding_dim, bias=True) # Bias added
@@ -63,8 +63,8 @@ class FivegEmbeddingAttentionLayer(nn.Module):
 class FivegLlamaDecoderLayer(LlamaDecoderLayer):
     def __init__(self, config: LlamaConfig, layer_idx: int):
         super().__init__(config, layer_idx) # Initialize the original LlamaDecoderLayer
-        self.spec_fiveg_knowledge_layer = FivegEmbeddingAttentionLayer(config, config.spec_kg_embedding_dim) # Initialize FivegEmbeddingAttentionLayer for spec features
-        self.code_fiveg_knowledge_layer = FivegEmbeddingAttentionLayer(config, config.code_kg_embedding_dim) # Initialize FivegEmbeddingAttentionLayer for code features
+        self.spec_fiveg_knowledge_layer = FivegEmbeddingAttentionLayer(config=config, num_fiveg_features=config.num_spec_features, kg_embedding_dim=config.spec_kg_embedding_dim) # Initialize FivegEmbeddingAttentionLayer for spec features
+        self.code_fiveg_knowledge_layer = FivegEmbeddingAttentionLayer(config=config,  num_fiveg_features=config.num_code_features, kg_embedding_dim=config.code_kg_embedding_dim) # Initialize FivegEmbeddingAttentionLayer for code features
         self.post_spec_fiveg_knowledge_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps) # LayerNorm after Spec Fiveg Layer
         self.post_code_fiveg_knowledge_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps) # LayerNorm after Code Fiveg Layer
 
