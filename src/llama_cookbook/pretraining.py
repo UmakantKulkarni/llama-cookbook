@@ -140,10 +140,10 @@ def main(**kwargs):
     train_config, fsdp_config = TRAIN_CONFIG(), FSDP_CONFIG()
     update_config((train_config, fsdp_config), **kwargs)
     dataset_config = generate_dataset_config(train_config, kwargs)
-    if dataset_config["dataset"] == "code3gpp_dataset":
-        dataset_config["is_fiveg_model"] = True
+    if dataset_config.dataset == "code3gpp_dataset":
+        dataset_config.is_fiveg_model = True
     else:
-        dataset_config["is_fiveg_model"] = False
+        dataset_config.is_fiveg_model = False
     # Set the seeds for reproducibility
     if is_xpu_available():
         torch.xpu.manual_seed(train_config.seed)
