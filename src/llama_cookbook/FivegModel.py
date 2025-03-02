@@ -17,7 +17,7 @@ from transformers.models.llama.modeling_llama import LlamaModel as _LlamaModel
 from transformers.models.llama.modeling_llama import LLAMA_INPUTS_DOCSTRING, LLAMA_START_DOCSTRING, _CONFIG_FOR_DOC
 
 from dataclasses import dataclass
-from transformers import DataCollator
+from transformers import DefaultDataCollator
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from transformers.data.data_collator import _torch_collate_batch, _tf_collate_batch, pad_without_fast_tokenizer_warning, _numpy_collate_batch
 
@@ -445,7 +445,7 @@ class FivegLlamaForCausalLM(_LlamaForCausalLM): # Inherit from the original Llam
         )
 
 @dataclass
-class FivegDataCollatorForLanguageModeling(DataCollator):
+class FivegDataCollatorForLanguageModeling(DefaultDataCollator):
 
     tokenizer: PreTrainedTokenizerBase
     mlm: bool = True
