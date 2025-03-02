@@ -199,8 +199,8 @@ class TS3GPPDataset(Dataset):
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "labels": labels,
-            "fiveg_feature_indices": fiveg_feature_indices,
-            "code_feature_indices": code_feature_indices,
+            "fiveg_feature_indices": fiveg_feature_indices_list,
+            "code_feature_indices": code_feature_indices_list,
         }
 
 
@@ -239,7 +239,7 @@ def get_code3gpp_dataset(dataset_config, tokenizer, split: str):
         "specipr": df_spec["specipr"].unique().tolist(),
     }
     print("FiveG (Protocol) feature vocabulary:")
-    print(json.dumps(FIVEG_FEATURE_VOCAB, indent=4))
+    #print(json.dumps(FIVEG_FEATURE_VOCAB, indent=4))
 
     if 0:
         # -- Load Source Code data --
@@ -250,7 +250,7 @@ def get_code3gpp_dataset(dataset_config, tokenizer, split: str):
             item["type"] = "code"
 
         print("Code feature vocabulary:")
-        print(json.dumps(CODE_FEATURE_VOCAB, indent=4))
+        #print(json.dumps(CODE_FEATURE_VOCAB, indent=4))
 
         # Combine them
         combined_data = spec_data + code_data
