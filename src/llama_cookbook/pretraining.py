@@ -215,7 +215,7 @@ def main(**kwargs):
         if train_config.is_fiveg_model:
             config.spec_kg_embedding_dim = 64
             config.code_kg_embedding_dim = 32
-            config.num_spec_features = 2596
+            config.num_spec_features = dataset_config.fiveg_feature_vocab_size
             config.num_code_features = 37
             model = FivegLlamaForCausalLM.from_pretrained(
                 train_config.model_name,
@@ -428,7 +428,7 @@ def main(**kwargs):
             return FivegDataCollatorForLanguageModeling(
                 tokenizer=dataset_processer,
                 mlm=False, # Set mlm=False for continual pre-training (causal LM)
-                fiveg_feature_vocab_size=2596,  # e.g. from train_dataset.fiveg_feature_size
+                fiveg_feature_vocab_size=dataset_config.fiveg_feature_vocab_size,  # e.g. from train_dataset.fiveg_feature_size
                 code_feature_vocab=CODE_FEATURE_VOCAB,
                 fiveg_feature_embedding_dim=64,
                 code_feature_embedding_dim=32,
