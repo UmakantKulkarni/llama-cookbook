@@ -365,10 +365,7 @@ class FivegLlamaModel(_LlamaModel): # Inherit from the original LlamaModel
 
 class KwargsForCausalLM(FlashAttentionKwargs, LossKwargs): ...
 
-@add_start_docstrings(
-    """LLaMAForCausalLM with fiveg knowledge injection. """,
-    LLAMA_START_DOCSTRING,
-)
+
 class FivegLlamaForCausalLM(_LlamaForCausalLM): # Inherit from the original LlamaForCausalLM
     _tied_weights_keys = ["lm_head.weight"]
     _tp_plan = {"lm_head": "colwise_rep"}
@@ -385,8 +382,8 @@ class FivegLlamaForCausalLM(_LlamaForCausalLM): # Inherit from the original Llam
 
     # Modify the forward method to accept and pass fiveg_feature_indices
     # @deprecate_kwarg("num_logits_to_keep", version="4.50", new_name="logits_to_keep")
-    @add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
-    @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
+    # @add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
+    # @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
     def forward(
         self,
         input_ids: torch.LongTensor = None,
