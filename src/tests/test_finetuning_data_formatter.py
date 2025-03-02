@@ -38,7 +38,7 @@ class FinetuningDataFormatterTests(unittest.TestCase):
                     Category(name="cat Y", description="cat Y description"),
                     Category(name="cat Z", description="cat Z description"),
                 ],
-                category_code_prefix="O",
+                category_code_prefix="S",
             ),
             llama_guard_prompt_configs=LlamaGuardPromptConfigs(
                 instructions_format_string=f"""[INST] Task: Check if there is unsafe content in '{agent_type_to_check}' messages in conversations according our safety policy with the below categories.

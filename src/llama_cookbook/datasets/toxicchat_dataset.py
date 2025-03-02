@@ -60,7 +60,7 @@ def get_llamaguard_toxicchat_dataset(dataset_config, tokenizer, split, return_js
     
     guidelines = Guidelines(
         categories=LLAMA_GUARD_3_CATEGORY,
-        category_code_prefix="O")
+        category_code_prefix="S")
     
     # Setting up configs
     llama_guard_prompt_configs = LlamaGuardPromptConfigs(

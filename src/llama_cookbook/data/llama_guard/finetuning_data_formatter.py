@@ -17,7 +17,7 @@ class Category:
 @dataclass
 class Guidelines:
     categories: Sequence[Category]
-    category_code_prefix: str = "O"
+    category_code_prefix: str = "S"
 
 
 class ExplanationPosition(Enum):

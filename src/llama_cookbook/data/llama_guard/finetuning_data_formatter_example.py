@@ -11,7 +11,7 @@ guidelines = Guidelines(
         Category(name="Location",
                  description="Information about where someone lives or works")
     ],
-    category_code_prefix="O"
+    category_code_prefix="S"
 )
 
 training_examples = [
