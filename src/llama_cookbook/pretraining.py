@@ -222,7 +222,6 @@ def main(**kwargs):
                 config=config,
                 quantization_config=bnb_config,
                 ignore_mismatched_sizes=True,
-                use_cache=use_cache,
                 attn_implementation="sdpa" if train_config.use_fast_kernels else None,
                 device_map=(
                     "auto"
