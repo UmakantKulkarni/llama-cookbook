@@ -212,7 +212,7 @@ def main(**kwargs):
         model.language_model.supports_gradient_checkpointing = True
     elif config.model_type == "llama":
         is_vision = False
-        if config.is_fiveg_model:
+        if train_config.is_fiveg_model:
             config.spec_kg_embedding_dim = 64
             config.code_kg_embedding_dim = 32
             config.num_spec_features = 2596
