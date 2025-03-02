@@ -433,6 +433,7 @@ def main(**kwargs):
                 code_feature_vocab=CODE_FEATURE_VOCAB,
                 fiveg_feature_embedding_dim=64,
                 code_feature_embedding_dim=32,
+                code_feature_vocab_size=37,
             )
         else:
             print("Using Original Data Collator")
