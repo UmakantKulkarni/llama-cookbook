@@ -17,7 +17,7 @@ from transformers.models.llama.modeling_llama import LlamaModel as _LlamaModel
 from transformers.models.llama.modeling_llama import LLAMA_INPUTS_DOCSTRING, LLAMA_START_DOCSTRING, _CONFIG_FOR_DOC
 
 from dataclasses import dataclass
-from transformers import DefaultDataCollator
+from transformers import DataCollatorForLanguageModeling
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from transformers.data.data_collator import _torch_collate_batch, _tf_collate_batch, pad_without_fast_tokenizer_warning, _numpy_collate_batch
 
@@ -445,16 +445,16 @@ class FivegLlamaForCausalLM(_LlamaForCausalLM): # Inherit from the original Llam
         )
 
 @dataclass
-class FivegDataCollatorForLanguageModeling(DefaultDataCollator):
+class FivegDataCollatorForLanguageModeling(DataCollatorForLanguageModeling):
 
     tokenizer: PreTrainedTokenizerBase
     mlm: bool = True
     mlm_probability: float = 0.15
-    mask_replace_prob: float = 0.8
-    random_replace_prob: float = 0.1
     pad_to_multiple_of: Optional[int] = None
     tf_experimental_compile: bool = False
     return_tensors: str = "pt"
+    mask_replace_prob: float = 0.8
+    random_replace_prob: float = 0.1
     fiveg_feature_vocab_size: Optional[int] = None # Add fiveg_feature_vocab_size
     code_feature_vocab: Optional[Dict[str, List[str]]] = None # Add code_feature_vocab
     fiveg_feature_embedding_dim: int = 32
