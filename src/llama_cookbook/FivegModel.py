@@ -59,15 +59,151 @@ class FivegEmbeddingAttentionLayer(nn.Module):
         return fiveg_aware_output, None # Attention weights are not returned for now
 
 
+class FivegEmbeddingMultiHeadAttentionLayer(nn.Module):
+    """
+    Classic multi-head attention variant for fiveg features.
+    
+    Args:
+        config: A config object containing:
+          - hidden_size (int): dimension of the main LLaMA hidden states
+          - attention_dropout (float): dropout probability for attention probs
+          - num_fiveg_heads (int): number of heads for fiveg attention (must be > 0)
+          
+        num_fiveg_features (int): number of unique fiveg feature indices
+        kg_embedding_dim (int): total dimension for the fiveg embeddings; must be 
+                                divisible by num_fiveg_heads for multi-head splitting.
+    """
+    def __init__(self, config, num_fiveg_features, kg_embedding_dim, num_fiveg_heads):
+        super().__init__()
+        if kg_embedding_dim % num_fiveg_heads != 0:
+            raise ValueError(
+                f"kg_embedding_dim={kg_embedding_dim} must be divisible by "
+                f"num_fiveg_heads={num_fiveg_heads}."
+            )
+        
+        self.num_heads = num_fiveg_heads
+        self.head_dim = kg_embedding_dim // self.num_heads
+        self.kg_embedding_dim = kg_embedding_dim
+
+        # Embedding for domain-specific (fiveg) features
+        self.fiveg_embedding = nn.Embedding(num_fiveg_features + 1, kg_embedding_dim)
+
+        # Linear projections for Q, K, V
+        # Q maps from hidden_size -> kg_embedding_dim
+        self.W_q = nn.Linear(config.hidden_size, kg_embedding_dim, bias=True)
+        # K, V map from kg_embedding_dim -> kg_embedding_dim
+        # because the fiveg features are embedded at dimension kg_embedding_dim
+        self.W_k = nn.Linear(kg_embedding_dim, kg_embedding_dim, bias=True)
+        self.W_v = nn.Linear(kg_embedding_dim, kg_embedding_dim, bias=True)
+
+        # Final output projection back to hidden_size
+        self.W_o = nn.Linear(kg_embedding_dim, config.hidden_size, bias=True)
+
+        # Dropout on attention probabilities
+        self.attn_dropout = nn.Dropout(config.attention_dropout)
+        
+        # Scale factor for each head = 1 / sqrt(head_dim)
+        self.scale_factor = self.head_dim ** -0.5
+
+    def _split_heads(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Splits the last dimension (kg_embedding_dim) into (num_heads, head_dim),
+        then rearranges to (B, num_heads, L, head_dim).
+        """
+        B, L, D = x.size()  # D should be kg_embedding_dim
+        x = x.view(B, L, self.num_heads, self.head_dim)
+        return x.permute(0, 2, 1, 3)  # (B, num_heads, L, head_dim)
+
+    def _merge_heads(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Merges (num_heads, head_dim) back into a single dimension (kg_embedding_dim).
+        x is of shape (B, num_heads, L, head_dim).
+        Returns shape (B, L, kg_embedding_dim).
+        """
+        B, nH, L, hD = x.size()
+        x = x.permute(0, 2, 1, 3).contiguous()  # (B, L, num_heads, head_dim)
+        return x.view(B, L, nH * hD)  # (B, L, kg_embedding_dim)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,          # (B, L, hidden_size)
+        fiveg_feature_indices: torch.Tensor,  # (B, L) indices for domain features
+        attention_mask: Optional[torch.Tensor] = None,
+        head_mask: Optional[torch.Tensor] = None,
+        output_attentions: bool = False
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Args:
+            hidden_states: (B, L, hidden_size)
+            fiveg_feature_indices: (B, L) 5G feature IDs, which will be embedded to (B, L, kg_embedding_dim)
+            attention_mask: optional, shape (B, L) or (B, 1, L, L) if broadcasting
+            head_mask: optional, for masking certain heads (rarely used)
+            output_attentions: if True, return attention_probs
+            
+        Returns:
+            fiveg_aware_output: (B, L, hidden_size)
+            optionally, attention_probs: (B, num_heads, L, L) if output_attentions=True
+        """
+        B, L = fiveg_feature_indices.size()
+
+        # 1) Embed the fiveg feature indices to (B, L, kg_embedding_dim)
+        fiveg_embeddings = self.fiveg_embedding(fiveg_feature_indices)
+
+        # 2) Project hidden_states => Q of shape (B, L, kg_embedding_dim)
+        Q = self.W_q(hidden_states)
+        #    Project fiveg_embeddings => K, V of shape (B, L, kg_embedding_dim)
+        K = self.W_k(fiveg_embeddings)
+        V = self.W_v(fiveg_embeddings)
+
+        # 3) Reshape Q, K, V into multi-head format
+        #    => (B, num_heads, L, head_dim)
+        Q = self._split_heads(Q)
+        K = self._split_heads(K)
+        V = self._split_heads(V)
+
+        # 4) Compute scaled dot-product attention
+        #    attention_scores = Q x K^T
+        #    Q, K => (B, num_heads, L, head_dim) => (B, num_heads, L, L) after matmul
+        attention_scores = torch.matmul(Q, K.transpose(-1, -2))
+        attention_scores *= self.scale_factor  # scale
+
+        # 5) Apply attention mask if given: typically (B, 1, 1, L) or (B, 1, L, L).
+        if attention_mask is not None:
+            # If mask is (B, L), we might need to reshape to (B, 1, 1, L) or (B, 1, L, L) 
+            # so it broadcasts properly.
+            # We'll assume user has provided a shape that can broadcast to (B, num_heads, L, L).
+            attention_scores = attention_scores.masked_fill(attention_mask == 0, float("-inf"))
+
+        # 6) Softmax over the last dim => (B, num_heads, L, L)
+        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
+
+        # 7) Dropout on attention probabilities
+        attention_probs = self.attn_dropout(attention_probs)
+
+        # 8) Weighted sum of V => (B, num_heads, L, head_dim)
+        context = torch.matmul(attention_probs, V)
+
+        # 9) Merge heads back to (B, L, kg_embedding_dim)
+        context = self._merge_heads(context)
+
+        # 10) Final linear projection: (B, L, hidden_size)
+        fiveg_aware_output = self.W_o(context)
+
+        # 11) Return attention
+        if output_attentions:
+            return fiveg_aware_output, attention_probs
+        else:
+            return fiveg_aware_output, None
+
+
 # Define Modified LlamaDecoderLayer with Two Fiveg Knowledge Injection Layers
 class FivegLlamaDecoderLayer(LlamaDecoderLayer):
     def __init__(self, config: LlamaConfig, layer_idx: int):
         super().__init__(config, layer_idx) # Initialize the original LlamaDecoderLayer
-        self.spec_fiveg_knowledge_layer = FivegEmbeddingAttentionLayer(config=config, num_fiveg_features=config.num_spec_features, kg_embedding_dim=config.spec_kg_embedding_dim) # Initialize FivegEmbeddingAttentionLayer for spec features
-        self.code_fiveg_knowledge_layer = FivegEmbeddingAttentionLayer(config=config,  num_fiveg_features=config.num_code_features, kg_embedding_dim=config.code_kg_embedding_dim) # Initialize FivegEmbeddingAttentionLayer for code features
-        self.post_spec_fiveg_knowledge_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps) # LayerNorm after Spec Fiveg Layer
-        self.post_code_fiveg_knowledge_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps) # LayerNorm after Code Fiveg Layer
-
+        self.spec_fiveg_knowledge_layer = FivegEmbeddingMultiHeadAttentionLayer(config=config, num_fiveg_features=config.num_spec_features, kg_embedding_dim=config.spec_kg_embedding_dim, num_fiveg_heads=config.spec_num_fiveg_heads)
+        self.code_fiveg_knowledge_layer = FivegEmbeddingMultiHeadAttentionLayer(config=config,  num_fiveg_features=config.num_code_features, kg_embedding_dim=config.code_kg_embedding_dim, num_fiveg_heads=config.code_num_fiveg_heads)
+        self.post_spec_fiveg_knowledge_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_code_fiveg_knowledge_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
     def forward(
         self,
@@ -455,11 +591,10 @@ class FivegDataCollatorForLanguageModeling(DataCollatorForLanguageModeling):
     return_tensors: str = "pt"
     mask_replace_prob: float = 0.8
     random_replace_prob: float = 0.1
-    fiveg_feature_vocab_size: Optional[int] = None # Add fiveg_feature_vocab_size
-    code_feature_vocab: Optional[Dict[str, List[str]]] = None # Add code_feature_vocab
-    fiveg_feature_embedding_dim: int = 32
-    code_feature_embedding_dim: int = 32 # Example dimension for code features
-    code_feature_vocab_size: Optional[int] = None
+    spec_feature_vocab_size: Optional[int] = None # Add spec_feature_vocab_size
+    code_feature_vocab_size: Optional[int] = None # Add code_feature_vocab_size
+    spec_feature_embedding_dim: int = 64 # Add dimension for spec features
+    code_feature_embedding_dim: int = 64 # Add dimension for code features
 
     def __post_init__(self):
         if self.mlm and self.tokenizer.mask_token is None:
@@ -475,15 +610,11 @@ class FivegDataCollatorForLanguageModeling(DataCollatorForLanguageModeling):
             raise ValueError("mask_replace_prob should be between 0 and 1.")
         if self.random_replace_prob < 0 or self.random_replace_prob > 1:
             raise ValueError("random_replace_prob should be between 0 and 1.")
-        if self.fiveg_feature_vocab_size <= 0 and self.fiveg_feature_embedding_dim <= 0:
-            raise ValueError("code_feature_embedding_dim should be greater than 0 when code_feature_vocab is provided.")
-        if self.code_feature_vocab is not None:
-            self.code_feature_vocab_size = sum(len(v) for v in self.code_feature_vocab.values())
-        if self.code_feature_vocab and (not self.code_feature_vocab_size or self.code_feature_vocab_size <= 0):
-            raise ValueError("code_feature_vocab_size must be > 0 when code_feature_vocab is provided.")
-
-
-
+        if self.spec_feature_vocab_size <= 0 and self.spec_feature_embedding_dim <= 0:
+            raise ValueError("spec_feature_vocab_size and spec_feature_embedding_dim should be greater than 0")
+        if self.code_feature_vocab_size <= 0 and self.code_feature_embedding_dim <= 0:
+            raise ValueError("code_feature_vocab_size and code_feature_embedding_dim should be greater than 0")
+        
         if self.tf_experimental_compile:
             import tensorflow as tf
 
@@ -545,27 +676,26 @@ class FivegDataCollatorForLanguageModeling(DataCollatorForLanguageModeling):
                 "input_ids": _tf_collate_batch(examples, self.tokenizer, pad_to_multiple_of=self.pad_to_multiple_of)
             }
 
-        # Fiveg Feature Indices Processing (same as before)
-        fiveg_feature_indices_batch = [example.get("fiveg_feature_indices", tf.constant([0] * self.fiveg_feature_vocab_size, dtype=tf.int64)) for example in examples] # Ensure default padding for missing features
-        max_fiveg_feature_len = max(len(indices) for indices in fiveg_feature_indices_batch) if fiveg_feature_indices_batch else 0
-        padded_fiveg_feature_indices_batch = []
-        for indices in fiveg_feature_indices_batch:
-            padding_length = max_fiveg_feature_len - len(indices)
+        # spec Feature Indices Processing (same as before)
+        spec_feature_indices_batch = [example.get("spec_feature_indices", tf.constant([0] * self.spec_feature_vocab_size, dtype=tf.int64)) for example in examples] # Ensure default padding for missing features
+        max_spec_feature_len = max(len(indices) for indices in spec_feature_indices_batch) if spec_feature_indices_batch else 0
+        padded_spec_feature_indices_batch = []
+        for indices in spec_feature_indices_batch:
+            padding_length = max_spec_feature_len - len(indices)
             padded_indices = tf.concat([indices, tf.zeros(padding_length, dtype=tf.int64)], axis=0)
-            padded_fiveg_feature_indices_batch.append(padded_indices)
-        batch["fiveg_feature_indices"] = tf.stack(padded_fiveg_feature_indices_batch) if padded_fiveg_feature_indices_batch else tf.constant([], dtype=tf.int64)
+            padded_spec_feature_indices_batch.append(padded_indices)
+        batch["spec_feature_indices"] = tf.stack(padded_spec_feature_indices_batch) if padded_spec_feature_indices_batch else tf.constant([], dtype=tf.int64)
 
 
         # Code Feature Indices Processing (NEW)
-        if self.code_feature_vocab:
-            code_feature_indices_batch = [example.get("code_feature_indices", tf.constant([-1] * self.code_feature_vocab_size, dtype=tf.int64)) for example in examples] # Ensure default padding for missing features
-            max_code_feature_len = max(len(indices) for indices in code_feature_indices_batch) if code_feature_indices_batch else 0
-            padded_code_feature_indices_batch = []
-            for indices in code_feature_indices_batch:
-                padding_length = max_code_feature_len - len(indices)
-                padded_indices = tf.concat([indices, tf.zeros(padding_length, dtype=tf.int64)], axis=0) # Pad with 0
-                padded_code_feature_indices_batch.append(padded_indices)
-            batch["code_feature_indices"] = tf.stack(padded_code_feature_indices_batch) if padded_code_feature_indices_batch else tf.constant([], dtype=tf.int64)
+        code_feature_indices_batch = [example.get("code_feature_indices", tf.constant([-1] * self.code_feature_vocab_size, dtype=tf.int64)) for example in examples] # Ensure default padding for missing features
+        max_code_feature_len = max(len(indices) for indices in code_feature_indices_batch) if code_feature_indices_batch else 0
+        padded_code_feature_indices_batch = []
+        for indices in code_feature_indices_batch:
+            padding_length = max_code_feature_len - len(indices)
+            padded_indices = tf.concat([indices, tf.zeros(padding_length, dtype=tf.int64)], axis=0) # Pad with 0
+            padded_code_feature_indices_batch.append(padded_indices)
+        batch["code_feature_indices"] = tf.stack(padded_code_feature_indices_batch) if padded_code_feature_indices_batch else tf.constant([], dtype=tf.int64)
 
 
         # Masking (same as before)
@@ -605,27 +735,26 @@ class FivegDataCollatorForLanguageModeling(DataCollatorForLanguageModeling):
                 "input_ids": _torch_collate_batch(examples, self.tokenizer, pad_to_multiple_of=self.pad_to_multiple_of)
             }
 
-        # Fiveg Feature Indices Processing (same as before)
-        fiveg_feature_indices_batch = [example.get("fiveg_feature_indices", torch.tensor([0] * self.fiveg_feature_vocab_size, dtype=torch.long)) for example in examples] # Ensure default padding for missing features
-        max_fiveg_feature_len = max(len(indices) for indices in fiveg_feature_indices_batch) if fiveg_feature_indices_batch else 0
-        padded_fiveg_feature_indices_batch = []
-        for indices in fiveg_feature_indices_batch:
-            padding_length = max_fiveg_feature_len - len(indices)
+        # spec Feature Indices Processing (same as before)
+        spec_feature_indices_batch = [example.get("spec_feature_indices", torch.tensor([0] * self.spec_feature_vocab_size, dtype=torch.long)) for example in examples] # Ensure default padding for missing features
+        max_spec_feature_len = max(len(indices) for indices in spec_feature_indices_batch) if spec_feature_indices_batch else 0
+        padded_spec_feature_indices_batch = []
+        for indices in spec_feature_indices_batch:
+            padding_length = max_spec_feature_len - len(indices)
             padded_indices = torch.cat([indices, torch.zeros(padding_length, dtype=torch.long)], dim=0)
-            padded_fiveg_feature_indices_batch.append(padded_indices)
-        batch["fiveg_feature_indices"] = torch.stack(padded_fiveg_feature_indices_batch) if padded_fiveg_feature_indices_batch else torch.tensor([], dtype=torch.long)
+            padded_spec_feature_indices_batch.append(padded_indices)
+        batch["spec_feature_indices"] = torch.stack(padded_spec_feature_indices_batch) if padded_spec_feature_indices_batch else torch.tensor([], dtype=torch.long)
 
 
         # Code Feature Indices Processing (NEW)
-        if self.code_feature_vocab:
-            code_feature_indices_batch = [example.get("code_feature_indices", torch.tensor([-1] * self.code_feature_vocab_size, dtype=torch.long)) for example in examples] # Ensure default padding for missing features
-            max_code_feature_len = max(len(indices) for indices in code_feature_indices_batch) if code_feature_indices_batch else 0
-            padded_code_feature_indices_batch = []
-            for indices in code_feature_indices_batch:
-                padding_length = max_code_feature_len - len(indices)
-                padded_indices = torch.cat([indices, torch.zeros(padding_length, dtype=torch.long)], dim=0) # Pad with 0
-                padded_code_feature_indices_batch.append(padded_indices)
-            batch["code_feature_indices"] = torch.stack(padded_code_feature_indices_batch) if padded_code_feature_indices_batch else torch.tensor([], dtype=torch.long)
+        code_feature_indices_batch = [example.get("code_feature_indices", torch.tensor([-1] * self.code_feature_vocab_size, dtype=torch.long)) for example in examples] # Ensure default padding for missing features
+        max_code_feature_len = max(len(indices) for indices in code_feature_indices_batch) if code_feature_indices_batch else 0
+        padded_code_feature_indices_batch = []
+        for indices in code_feature_indices_batch:
+            padding_length = max_code_feature_len - len(indices)
+            padded_indices = torch.cat([indices, torch.zeros(padding_length, dtype=torch.long)], dim=0) # Pad with 0
+            padded_code_feature_indices_batch.append(padded_indices)
+        batch["code_feature_indices"] = torch.stack(padded_code_feature_indices_batch) if padded_code_feature_indices_batch else torch.tensor([], dtype=torch.long)
 
 
         # Masking (same as before)
@@ -695,27 +824,26 @@ class FivegDataCollatorForLanguageModeling(DataCollatorForLanguageModeling):
                 "input_ids": _numpy_collate_batch(examples, self.tokenizer, pad_to_multiple_of=self.pad_to_multiple_of)
             }
 
-        # Fiveg Feature Indices Processing (same as before)
-        fiveg_feature_indices_batch = [example.get("fiveg_feature_indices", np.array([0] * self.fiveg_feature_vocab_size, dtype=np.int64)) for example in examples] # Ensure default padding for missing features
-        max_fiveg_feature_len = max(len(indices) for indices in fiveg_feature_indices_batch) if fiveg_feature_indices_batch else 0
-        padded_fiveg_feature_indices_batch = []
-        for indices in fiveg_feature_indices_batch:
-            padding_length = max_fiveg_feature_len - len(indices)
+        # spec Feature Indices Processing (same as before)
+        spec_feature_indices_batch = [example.get("spec_feature_indices", np.array([0] * self.spec_feature_vocab_size, dtype=np.int64)) for example in examples] # Ensure default padding for missing features
+        max_spec_feature_len = max(len(indices) for indices in spec_feature_indices_batch) if spec_feature_indices_batch else 0
+        padded_spec_feature_indices_batch = []
+        for indices in spec_feature_indices_batch:
+            padding_length = max_spec_feature_len - len(indices)
             padded_indices = np.concatenate([indices, np.zeros(padding_length, dtype=np.int64)], axis=0)
-            padded_fiveg_feature_indices_batch.append(padded_indices)
-        batch["fiveg_feature_indices"] = np.stack(padded_fiveg_feature_indices_batch) if padded_fiveg_feature_indices_batch else np.array([], dtype=np.int64)
+            padded_spec_feature_indices_batch.append(padded_indices)
+        batch["spec_feature_indices"] = np.stack(padded_spec_feature_indices_batch) if padded_spec_feature_indices_batch else np.array([], dtype=np.int64)
 
 
         # Code Feature Indices Processing (NEW)
-        if self.code_feature_vocab:
-            code_feature_indices_batch = [example.get("code_feature_indices", np.array([-1] * self.code_feature_vocab_size, dtype=np.int64)) for example in examples] # Ensure default padding for missing features
-            max_code_feature_len = max(len(indices) for indices in code_feature_indices_batch) if code_feature_indices_batch else 0
-            padded_code_feature_indices_batch = []
-            for indices in code_feature_indices_batch:
-                padding_length = max_code_feature_len - len(indices)
-                padded_indices = np.concatenate([indices, np.zeros(padding_length, dtype=np.int64)], axis=0) # Pad with 0
-                padded_code_feature_indices_batch.append(padded_indices)
-            batch["code_feature_indices"] = np.stack(padded_code_feature_indices_batch) if padded_code_feature_indices_batch else np.array([], dtype=np.int64)
+        code_feature_indices_batch = [example.get("code_feature_indices", np.array([-1] * self.code_feature_vocab_size, dtype=np.int64)) for example in examples] # Ensure default padding for missing features
+        max_code_feature_len = max(len(indices) for indices in code_feature_indices_batch) if code_feature_indices_batch else 0
+        padded_code_feature_indices_batch = []
+        for indices in code_feature_indices_batch:
+            padding_length = max_code_feature_len - len(indices)
+            padded_indices = np.concatenate([indices, np.zeros(padding_length, dtype=np.int64)], axis=0) # Pad with 0
+            padded_code_feature_indices_batch.append(padded_indices)
+        batch["code_feature_indices"] = np.stack(padded_code_feature_indices_batch) if padded_code_feature_indices_batch else np.array([], dtype=np.int64)
 
 
         # Masking (same as before)

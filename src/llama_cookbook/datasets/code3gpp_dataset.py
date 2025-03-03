@@ -1,3 +1,4 @@
+import os
 import random
 import pandas as pd
 import json
@@ -71,6 +72,63 @@ CODE_FEATURE_VOCAB = {
 }
 
 
+def filter_3gpp_dataset(fiveg_only=True,lte_only=False,common=False):
+    dataset_dir = os.path.dirname(DATASET_JSON_FILE)
+    fiveg_dataset_file = os.path.join(dataset_dir, "5g_ts_3gpp_dataset.csv")
+    lte_dataset_file = os.path.join(dataset_dir, "lte_ts_3gpp_dataset.csv")
+    common_dataset_file = os.path.join(dataset_dir, "common_ts_3gpp_dataset.csv")
+
+    if fiveg_only:
+        if os.path.exists(fiveg_dataset_file):
+            df_5g = pd.read_csv(fiveg_dataset_file) 
+            return df_5g
+    if lte_only:
+        if os.path.exists(lte_dataset_file):
+            df_lte = pd.read_csv(lte_dataset_file)
+            return df_lte
+    if common:
+        if os.path.exists(common_dataset_file):
+            df_common = pd.read_csv(common_dataset_file)
+            return df_common
+
+    # -- Load TS3GPP specification data --
+    with open(DATASET_JSON_FILE, "r") as f_spec:
+        raw_spec_data = json.load(f_spec)
+    df_spec_all = pd.DataFrame(raw_spec_data)
+    df_spec_all["type"] = "spec"
+    df_spec_all = df_spec_all[df_spec_all["spectype"] == "Technical Specification (TS)"]
+    #df_spec = df_spec_all[df_spec_all["technology"].apply(lambda tech_list: any(t in ["5G", "LTE"] for t in tech_list))]
+    
+    # Convert technology column to tuple for exact matching
+    df_spec_all["technology_tuple"] = df_spec_all["technology"].apply(tuple)
+
+    # Get df_5g: Only rows where technology is exactly ["5G"]
+    df_5g = df_spec_all[df_spec_all["technology_tuple"] == ("5G",)].drop(columns=["technology_tuple"])
+    print("df_5g shape:", df_5g.shape)
+    df_5g.to_csv(fiveg_dataset_file, index=False)
+
+    # Get df_lte: Only rows where technology is exactly ["LTE"]
+    df_lte = df_spec_all[df_spec_all["technology_tuple"] == ("LTE",)].drop(columns=["technology_tuple"])
+    print("df_lte shape:", df_lte.shape)
+    df_lte.to_csv(lte_dataset_file, index=False)
+
+    # Get df_common: Rows containing 5G or LTE but not in df_5g or df_lte
+    df_common = df_spec_all[
+        df_spec_all["technology"].apply(lambda tech: any(t in ["5G", "LTE"] for t in tech))
+        & ~df_spec_all.index.isin(df_5g.index)
+        & ~df_spec_all.index.isin(df_lte.index)
+    ].drop(columns=["technology_tuple"])
+    print("df_common shape:", df_common.shape)
+    df_common.to_csv(common_dataset_file, index=False)
+    
+    if fiveg_only: 
+        return df_5g
+    if lte_only:
+        return df_lte
+    if common:
+        return df_common
+
+
 class TS3GPPDataset(Dataset):
     """
     A Dataset wrapping both 3GPP spec items (type='spec') and code items (type='code').
@@ -105,7 +163,7 @@ class TS3GPPDataset(Dataset):
             text,
             truncation=True,
             padding="max_length",
-            max_length=3584,
+            max_length=2048,
             return_tensors="pt"
         )
 
@@ -208,15 +266,8 @@ def get_code3gpp_dataset(dataset_config, tokenizer, split: str):
     spec_data = []
     code_data = []
 
-    # -- Load TS3GPP specification data --
-    with open(DATASET_JSON_FILE, "r") as f_spec:
-        raw_spec_data = json.load(f_spec)
-    df_spec_all = pd.DataFrame(raw_spec_data)
-    df_spec_all = df_spec_all[df_spec_all["spectype"] == "Technical Specification (TS)"]
-    df_spec = df_spec_all[df_spec_all["technology"].apply(lambda tech_list: any(t in ["5G", "LTE"] for t in tech_list))]
+    df_spec = filter_3gpp_dataset(fiveg_only=True,lte_only=False,common=False)
     spec_data = df_spec.to_dict(orient="records")
-    for item in spec_data:
-        item["type"] = "spec"
 
     # Example: Build your “protocol” (fiveg) feature vocab from the spec DataFrame
     FIVEG_FEATURE_VOCAB = {
@@ -258,8 +309,8 @@ def get_code3gpp_dataset(dataset_config, tokenizer, split: str):
     random.shuffle(combined_data)
 
     # Calculate 5% for train and 5% for test
-    train_size = int(len(combined_data) * 0.01)
-    test_size = int(len(combined_data) * 0.01)
+    train_size = int(len(combined_data) * 0.001)
+    test_size = int(len(combined_data) * 0.001)
 
     train_data = random.sample(combined_data, train_size)
     remaining_data = [entry for entry in combined_data if entry not in train_data]
@@ -270,7 +321,6 @@ def get_code3gpp_dataset(dataset_config, tokenizer, split: str):
         data = test_data
     else:
         raise ValueError(f"Invalid split: {split} (must be 'train' or 'test').")
-
     
     dataset = TS3GPPDataset(
         data=data,
