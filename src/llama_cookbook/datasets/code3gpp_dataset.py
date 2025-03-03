@@ -309,8 +309,8 @@ def get_code3gpp_dataset(dataset_config, tokenizer, split: str):
     random.shuffle(combined_data)
 
     # Calculate 5% for train and 5% for test
-    train_size = int(len(combined_data) * 0.001)
-    test_size = int(len(combined_data) * 0.001)
+    train_size = int(len(combined_data) * 0.8)
+    test_size = int(len(combined_data) * 0.2)
 
     train_data = random.sample(combined_data, train_size)
     remaining_data = [entry for entry in combined_data if entry not in train_data]
