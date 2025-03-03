@@ -218,12 +218,12 @@ def main(**kwargs):
     elif config.model_type == "llama":
         is_vision = False
         if train_config.is_fiveg_model:
-            config.spec_kg_embedding_dim = 64
-            config.code_kg_embedding_dim = 64
+            config.spec_kg_embedding_dim = 256
+            config.code_kg_embedding_dim = 256
             config.num_spec_features = dataset_config.spec_feature_vocab_size
             config.num_code_features = dataset_config.code_feature_vocab_size
-            config.spec_num_fiveg_heads = 4
-            config.code_num_fiveg_heads = 4
+            config.spec_num_fiveg_heads = 8
+            config.code_num_fiveg_heads = 8
             model = FivegLlamaForCausalLM.from_pretrained(
                 train_config.model_name,
                 config=config,
@@ -433,8 +433,8 @@ def main(**kwargs):
                 mlm=False, # Set mlm=False for continual pre-training (causal LM)
                 spec_feature_vocab_size=dataset_config.spec_feature_vocab_size,  # e.g. from train_dataset.fiveg_feature_size
                 code_feature_vocab_size=dataset_config.code_feature_vocab_size,
-                spec_feature_embedding_dim=64,
-                code_feature_embedding_dim=64,
+                spec_feature_embedding_dim=256,
+                code_feature_embedding_dim=256,
             )
         else:
             print("Using Original Data Collator")

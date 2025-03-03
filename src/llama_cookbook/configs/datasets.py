@@ -50,6 +50,6 @@ class code3gpp_dataset:
     dataset: str = "code3gpp_dataset"
     train_split: str = "train"
     test_split: str = "test"
-    spec_feature_vocab_size: int = 63
-    code_feature_vocab_size: int = 36
+    spec_feature_vocab_size: int = 502
+    code_feature_vocab_size: int = 37
     is_fiveg_model: bool = True
