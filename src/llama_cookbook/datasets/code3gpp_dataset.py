@@ -119,6 +119,8 @@ class TS3GPPDataset(Dataset):
         fiveg_feature_indices = torch.tensor([-1] * self.fiveg_feature_size, dtype=torch.long)
         code_feature_indices = torch.tensor([-1] * self.code_feature_size, dtype=torch.long)
 
+        fiveg_feature_indices_list = []
+        code_feature_indices_list = []
         if item_type == "spec":
             # --- "FiveG" Feature Extraction (previously protocol features) ---
             # Example fields that your JSON might contain:
@@ -132,7 +134,6 @@ class TS3GPPDataset(Dataset):
             }
 
             # Convert them to indices
-            fiveg_feature_indices_list = []
             for feat_name in self.fiveg_feature_names:
                 feat_val = feature_values.get(feat_name, None)
                 if feat_val is not None:
@@ -174,7 +175,6 @@ class TS3GPPDataset(Dataset):
                 "interface": item.get("interface"),
             }
 
-            code_feature_indices_list = []
             for feat_name in self.code_feature_names:
                 feat_val = code_feature_values.get(feat_name, None)
                 if feat_val:
@@ -269,8 +269,8 @@ def get_code3gpp_dataset(dataset_config, tokenizer, split: str):
     random.shuffle(combined_data)
 
     # Calculate 5% for train and 5% for test
-    train_size = int(len(combined_data) * 0.05)
-    test_size = int(len(combined_data) * 0.05)
+    train_size = int(len(combined_data) * 0.01)
+    test_size = int(len(combined_data) * 0.01)
 
     train_data = random.sample(combined_data, train_size)
     remaining_data = [entry for entry in combined_data if entry not in train_data]
