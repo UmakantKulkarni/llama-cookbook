@@ -79,8 +79,8 @@ class TS3GPPDataset(Dataset):
     def __init__(self, data, tokenizer, fiveg_feature_vocab, code_feature_vocab):
         self.data = data
         self.tokenizer = tokenizer
-
-        # 'fiveg_feature_vocab' is what was previously called 'protocol_feature_vocab'
+    
+        # 'fiveg_feature_vocab'
         self.fiveg_feature_vocab = fiveg_feature_vocab
         self.code_feature_vocab = code_feature_vocab
 
@@ -101,29 +101,23 @@ class TS3GPPDataset(Dataset):
         text = item["content"]
         item_type = item["type"]  # 'spec' or 'code'
 
-        # Tokenize
         tokenized_output = self.tokenizer(
             text,
             truncation=True,
-            padding="max_length",  # or 'longest' if you do dynamic padding in collator
-            max_length=3584,       # Adjust max_length as needed
+            padding="max_length",
+            max_length=3584,
             return_tensors="pt"
         )
 
-        input_ids = tokenized_output["input_ids"].squeeze(0)
-        attention_mask = tokenized_output["attention_mask"].squeeze(0)
-        labels = input_ids.clone()
-        labels[labels == self.tokenizer.pad_token_id] = -100
+        input_ids = tokenized_output["input_ids"].squeeze(0).tolist()
+        attention_mask = tokenized_output["attention_mask"].squeeze(0).tolist()
+        labels = input_ids.copy()  # Copy list
+        labels = [-100 if token == self.tokenizer.pad_token_id else token for token in labels]
 
-        # Default: all features = -1 (null). We'll overwrite those that exist.
-        fiveg_feature_indices = torch.tensor([-1] * self.fiveg_feature_size, dtype=torch.long)
-        code_feature_indices = torch.tensor([-1] * self.code_feature_size, dtype=torch.long)
+        fiveg_feature_indices_list = [-1] * self.fiveg_feature_size
+        code_feature_indices_list = [-1] * self.code_feature_size
 
-        fiveg_feature_indices_list = []
-        code_feature_indices_list = []
         if item_type == "spec":
-            # --- "FiveG" Feature Extraction (previously protocol features) ---
-            # Example fields that your JSON might contain:
             feature_values = {
                 "specnumber": item.get("specnumber"),
                 "series": item.get("series"),
@@ -133,12 +127,11 @@ class TS3GPPDataset(Dataset):
                 "specipr": item.get("specipr"),
             }
 
-            # Convert them to indices
             for feat_name in self.fiveg_feature_names:
                 feat_val = feature_values.get(feat_name, None)
-                if feat_val is not None:
+                if feat_val:
                     if isinstance(feat_val, list):
-                        # E.g. a list of tags
+                         # E.g. a list of tags
                         for val in feat_val:
                             try:
                                 idx_ = self.fiveg_feature_vocab[feat_name].index(val)
@@ -155,17 +148,14 @@ class TS3GPPDataset(Dataset):
                 else:
                     # Missing feature
                     fiveg_feature_indices_list.append(-1)
-
+            
             # Pad or truncate to the known size
             if len(fiveg_feature_indices_list) < self.fiveg_feature_size:
                 fiveg_feature_indices_list.extend([-1] * (self.fiveg_feature_size - len(fiveg_feature_indices_list)))
             else:
                 fiveg_feature_indices_list = fiveg_feature_indices_list[: self.fiveg_feature_size]
 
-            fiveg_feature_indices = torch.tensor(fiveg_feature_indices_list, dtype=torch.long)
-
         elif item_type == "code":
-            # --- Code Feature Extraction (example placeholders) ---
             code_feature_values = {
                 "filetype": item.get("filetype"),
                 "extention": item.get("extention"),
@@ -191,7 +181,6 @@ class TS3GPPDataset(Dataset):
             else:
                 code_feature_indices_list = code_feature_indices_list[: self.code_feature_size]
 
-            code_feature_indices = torch.tensor(code_feature_indices_list, dtype=torch.long)
         else:
             raise ValueError(f"Unknown item type: {item_type}. Must be 'spec' or 'code'.")
 
