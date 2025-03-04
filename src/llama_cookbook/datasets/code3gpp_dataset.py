@@ -156,8 +156,10 @@ class TS3GPPDataset(Dataset):
 
     def __getitem__(self, idx):
         item = self.data[idx]
-        text = item["content"]
-        item_type = item["type"]  # 'spec' or 'code'
+        text = item.get("content", "")
+        if not isinstance(text, str):
+            text = str(text)
+        item_type = item.get("type", "unknown")  # 'spec' or 'code'
 
         tokenized_output = self.tokenizer(
             text,
