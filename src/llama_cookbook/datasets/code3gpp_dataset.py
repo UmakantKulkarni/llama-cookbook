@@ -251,6 +251,24 @@ class TS3GPPDataset(Dataset):
         }
 
 
+def split_spec_data(combined_data, split, test_size_percent=0.2):
+    """Splits spec data (list of dictionaries) into train and test sets using slicing."""
+
+    random_seed = 42
+    random.seed(random_seed)
+    random.shuffle(combined_data)  # Shuffle after setting the seed
+
+    test_size = int(len(combined_data) * test_size_percent)
+    train_size = len(combined_data) - test_size
+
+    if split == "train":
+        return combined_data[:train_size]
+    elif split == "test":
+        return combined_data[train_size:]
+    else:
+        raise ValueError(f"Invalid split: {split} (must be 'train' or 'test').")
+
+
 def get_code3gpp_dataset(dataset_config, tokenizer, split: str):
     """
     Loads and preprocesses the combined dataset (TS3GPP specs + source code) from JSON files.
@@ -305,20 +323,12 @@ def get_code3gpp_dataset(dataset_config, tokenizer, split: str):
         else:
             raise ValueError(f"Invalid split: {split} (must be 'train' or 'test').")
     
-    combined_data = spec_data
-    random.shuffle(combined_data)
-
-    # Calculate 5% for train and 5% for test
-    train_size = int(len(combined_data) * 0.8)
-    test_size = int(len(combined_data) * 0.2)
-
-    train_data = random.sample(combined_data, train_size)
-    remaining_data = [entry for entry in combined_data if entry not in train_data]
-    test_data = random.sample(remaining_data, test_size)
+    combined_data = spec_data.copy()
+    
     if split == "train":
-        data = train_data
+        data = split_spec_data(combined_data, split, test_size_percent=0.2)
     elif split == "test":
-        data = test_data
+        data = split_spec_data(combined_data, split, test_size_percent=0.2)
     else:
         raise ValueError(f"Invalid split: {split} (must be 'train' or 'test').")
     
