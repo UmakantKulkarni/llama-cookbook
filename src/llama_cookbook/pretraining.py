@@ -63,7 +63,7 @@ from transformers.models.mllama.modeling_mllama import (
     MllamaSelfAttentionDecoderLayer,
     MllamaVisionEncoderLayer,
 )
-from llama_cookbook.FivegModel import FivegLlamaForCausalLM, FivegDataCollatorForLanguageModeling
+from llama_cookbook.FivegModel import FivegLlamaForCausalLM, FivegLlamaDecoderLayer, FivegDataCollatorForLanguageModeling
 CODE_FEATURE_VOCAB = {
     "filetype": [
         "config",
@@ -288,6 +288,7 @@ def main(**kwargs):
                 model, train_config.from_peft_checkpoint, is_trainable=True
             )
             peft_config = model.peft_config
+            print("Loaded the peft model checkpoint from", train_config.from_peft_checkpoint)
         # Generate the peft config and start fine-tuning from original model
         else:
             peft_config = generate_peft_config(train_config, kwargs)
@@ -334,7 +335,10 @@ def main(**kwargs):
             )
         else:
             # Create the FSDP wrapper for LlamaDecoderLayer in text models
-            my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, [LlamaDecoderLayer])
+            if train_config.is_fiveg_model:
+                my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, [FivegLlamaDecoderLayer])
+            else:
+                my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, [LlamaDecoderLayer])
         device_id = 0
         if is_xpu_available():
             device_id = torch.xpu.current_device()
