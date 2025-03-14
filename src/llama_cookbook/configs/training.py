@@ -17,14 +17,14 @@ class train_config:
     context_length: int=2048
     gradient_accumulation_steps: int=4
     gradient_clipping: bool = True
-    gradient_clipping_threshold: float = 1.0
+    gradient_clipping_threshold: float = 0.5
     num_epochs: int=3
     max_train_step: int=0
     max_eval_step: int=0
     num_workers_dataloader: int=16
-    lr: float=3e-5
+    lr: float=3e-6
     weight_decay: float= 1e-2
-    gamma: float= 0.9 # multiplicatively decay the learning rate by gamma after each epoch
+    gamma: float= 0.85 # multiplicatively decay the learning rate by gamma after each epoch
     seed: int=42
     use_fp16: bool=False  # load model paramater in torch.float16 dtype (not recommended)
     mixed_precision: bool=True
@@ -37,7 +37,7 @@ class train_config:
     freeze_layers: bool = False
     num_freeze_layers: int = 1
     freeze_LLM_only: bool = False # Freeze self-attention layers in the language_model. Vision model, multi_modal_projector, cross-attention will be fine-tuned
-    quantization: str = "4bit"
+    quantization: str = None
     one_gpu: bool = False
     save_model: bool = True
     dist_checkpoint_root_folder: str="/opt/llama-cookbook/output" # will be used if using FSDP
