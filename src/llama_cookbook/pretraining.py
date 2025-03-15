@@ -362,8 +362,7 @@ def main(**kwargs):
         model = FSDP(
             model,
             auto_wrap_policy=(
-                #my_auto_wrapping_policy if train_config.use_peft else wrapping_policy
-                my_auto_wrapping_policy
+                my_auto_wrapping_policy if train_config.use_peft else wrapping_policy
             ),
             cpu_offload=(
                 CPUOffload(offload_params=True)
