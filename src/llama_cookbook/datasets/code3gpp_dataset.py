@@ -265,11 +265,11 @@ def split_spec_data(combined_data, split, test_size_percent=0.2):
     print(f"Train size: {train_size}, Test size: {test_size}")
 
     if split == "train":
-        return combined_data[:train_size]
-        #return combined_data[:100]
+        #return combined_data[:train_size]
+        return combined_data[:100]
     elif split == "test":
-        return combined_data[train_size:]
-        #return combined_data[100:200]
+        #return combined_data[train_size:]
+        return combined_data[100:200]
     else:
         raise ValueError(f"Invalid split: {split} (must be 'train' or 'test').")
 
@@ -337,7 +337,7 @@ def get_code3gpp_dataset(dataset_config, tokenizer, split: str):
     else:
         raise ValueError(f"Invalid split: {split} (must be 'train' or 'test').")
     
-    print("One entry from data:")
+    print("One entry from {} data:".format(split))
     print(data[0])
     
     dataset = TS3GPPDataset(

@@ -408,7 +408,22 @@ def freeze_transformer_layers(model, num_layer):
             if i < num_layer:
                 for param in layer.parameters():
                     param.requires_grad = False
-                    
+
+def freeze_transformer_layers_pretrain(model, freeze_base=True):
+    """
+    Generalized function to freeze transformer layers.
+    
+    - freeze_base=True  → Freezes all base LLaMA layers, keeps 5G layers trainable.
+    - freeze_base=False → Keeps all layers trainable (full fine-tuning).
+    """
+    
+    for name, param in model.named_parameters():
+        if freeze_base and ("spec_fiveg_knowledge_layer" not in name and "code_fiveg_knowledge_layer" not in name):
+            param.requires_grad = False  # Freeze all original LLaMA layers
+        else:
+            param.requires_grad = True   # Keep 5G layers trainable
+
+
 def freeze_LLM_only(model):
     """
     Freeze self-attention layers in the language_model. vision_model, multi_modal_projector, and cross-attention layers will be fine-tuned

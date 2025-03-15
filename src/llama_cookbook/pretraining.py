@@ -38,6 +38,7 @@ from llama_cookbook.utils.fsdp_utils import hsdp_device_mesh, get_policies
 from llama_cookbook.utils.train_utils import (
     clear_gpu_cache,
     freeze_transformer_layers,
+    freeze_transformer_layers_pretrain,
     freeze_LLM_only,
     print_model_size,
     print_frozen_model_status,
@@ -258,7 +259,8 @@ def main(**kwargs):
     tokenizer = AutoTokenizer.from_pretrained(
         train_config.model_name
         if train_config.tokenizer_name is None
-        else train_config.tokenizer_name
+        else train_config.tokenizer_name,
+        use_fast=False,
     )
     if not tokenizer.pad_token_id:
         tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -313,7 +315,10 @@ def main(**kwargs):
         check_fsdp_config(fsdp_config)
 
         if not train_config.use_peft and train_config.freeze_layers:
-            freeze_transformer_layers(model, train_config.num_freeze_layers)
+            if train_config.continue_pretrain:
+                freeze_transformer_layers_pretrain(model, freeze_base=True)
+            else:
+                freeze_transformer_layers(model, train_config.num_freeze_layers)
             # print model size and frozen layers after freezing layers
             print_frozen_model_status(model, train_config, rank if train_config.enable_fsdp else 0)
 
