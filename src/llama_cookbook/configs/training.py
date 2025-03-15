@@ -16,7 +16,7 @@ class train_config:
     run_validation: bool=True
     batch_size_training: int=1
     batching_strategy: str="packing" #alternative: padding
-    context_length: int=2048
+    context_length: int=512
     gradient_accumulation_steps: int=2
     gradient_clipping: bool = True
     gradient_clipping_threshold: float = 0.5
