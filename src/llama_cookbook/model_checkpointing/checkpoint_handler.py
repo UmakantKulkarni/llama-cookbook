@@ -27,7 +27,7 @@ from torch.distributed.checkpoint.default_planner import (
 )
 
 
-from torch.distributed.checkpoint.state_dict import get_model_state_dict, StateDictOptions
+from torch.distributed.checkpoint.state_dict import get_model_state_dict, StateDictOptions, get_state_dict
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 import torch.distributed._shard.checkpoint as dist_cp
 import torch.distributed as dist
@@ -202,9 +202,7 @@ def load_model_checkpoint(model, rank, cfg):
 
     # Load checkpoint
     model_checkpoint = torch.load(latest_checkpoint_path, map_location="cpu")
-
-    with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT):
-        model.load_state_dict(model_checkpoint)
+    model.load_state_dict(get_state_dict(model_checkpoint))
 
     print(f"Model checkpoint successfully loaded from {latest_checkpoint_path} to rank 0 CPU")
 
