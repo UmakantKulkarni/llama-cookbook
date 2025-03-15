@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # This software may be used and distributed according to the terms of the Llama 2 Community License Agreement.
 
+import os
 from pathlib import Path
 from datetime import datetime
 import torch
@@ -152,8 +153,8 @@ def save_fsdp_model_checkpoint_full(
         )
         save_dir = Path.cwd() / folder_name
         save_dir.mkdir(parents=True, exist_ok=True)
-        save_name = cfg.model_name.replace("/","--") + "-" + str(epoch) + ".pt"
-        save_full_path = str(save_dir) + "/" + save_name
+        save_name = cfg.model_name.replace("/","_") + "-" + str(epoch) + ".pt"
+        save_full_path = os.path.join(str(save_dir), save_name)
 
         # save model
         torch.save(cpu_state, save_full_path)
@@ -186,7 +187,7 @@ def load_model_checkpoint(model, rank, cfg):
 
     # Find the latest checkpoint by modification time
     checkpoint_files = sorted(
-        load_dir.glob(f"{cfg.model_name.replace('/', '--')}*.pt"),
+        load_dir.glob(f"{cfg.model_name.replace('/', '_')}*.pt"),
         key=lambda p: p.stat().st_mtime,  # Sort by last modified time
         reverse=True  # Newest checkpoint first
     )
@@ -232,11 +233,8 @@ def save_optimizer_checkpoint(model, optimizer, rank, cfg, epoch=1):
         )
         save_dir = Path.cwd() / folder_name
         save_dir.mkdir(parents=True, exist_ok=True)
-
-        opt_save_name = (
-            "optimizer" + "-" + cfg.model_name + "-" + str(epoch) + ".pt"
-        )
-        opt_save_full_path = save_dir / opt_save_name
+        save_name = "optimizer-" + cfg.model_name.replace("/","_") + "-" + str(epoch) + ".pt"
+        opt_save_full_path = os.path.join(str(save_dir), save_name)
 
         print(f"--> saving optimizer state...")
 
@@ -269,7 +267,7 @@ def load_optimizer_checkpoint(model, rank, cfg):
 
     # Find the latest optimizer checkpoint by modification time
     optimizer_files = sorted(
-        load_dir.glob(f"optimizer-{cfg.model_name}*.pt"),
+        load_dir.glob(f"optimizer-{cfg.model_name.replace('/', '_')}*.pt"),
         key=lambda p: p.stat().st_mtime,  # Sort by last modified time
         reverse=True  # Newest checkpoint first
     )
