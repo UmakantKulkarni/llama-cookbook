@@ -64,6 +64,7 @@ from transformers.models.mllama.modeling_mllama import (
     MllamaSelfAttentionDecoderLayer,
     MllamaVisionEncoderLayer,
 )
+from llama_cookbook.model_checkpointing import load_model_checkpoint, load_optimizer_checkpoint
 from llama_cookbook.FivegModel import FivegLlamaForCausalLM, FivegLlamaDecoderLayer, FivegDataCollatorForLanguageModeling
 CODE_FEATURE_VOCAB = {
     "filetype": [
@@ -282,6 +283,9 @@ def main(**kwargs):
         and not train_config.quantization
     ):
         model.to(torch.bfloat16)
+
+    if train_config.load_dist_checkpoint:
+        load_model_checkpoint(model, rank, train_config)
 
     if train_config.use_peft:
         # Load the pre-trained peft model checkpoint and setup its configuration
@@ -508,6 +512,8 @@ def main(**kwargs):
             lr=train_config.lr,
             weight_decay=train_config.weight_decay,
         )
+    if train_config.load_dist_checkpoint:
+        load_optimizer_checkpoint(model, rank, train_config)
     scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
     results = train(
         model,

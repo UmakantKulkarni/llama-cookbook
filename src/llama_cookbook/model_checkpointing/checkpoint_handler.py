@@ -170,24 +170,43 @@ def load_model_checkpoint(model, rank, cfg):
     if rank != 0:
         return
 
-    # where is the checkpoint at...
-    full_state_dict_model_path = (
-        Path.cwd() / cfg.checkpoint_folder / cfg.checkpoint_model_filename
+    # Construct the checkpoint folder path (consistent with save function)
+    folder_name = (
+        cfg.dist_checkpoint_root_folder
+        + "/"
+        + cfg.dist_checkpoint_folder
+        + "-"
+        + cfg.model_name
     )
-    # is it present...
-    if not full_state_dict_model_path.is_file():
-        print(
-            f"model checkpoint {full_state_dict_model_path} not present. Returning..."
-        )
+    load_dir = Path.cwd() / folder_name
+
+    if not load_dir.exists():
+        print(f"WARNING: Checkpoint directory {load_dir} does not exist. Skipping optimizer load.")
         return
 
+    # Find the latest checkpoint by modification time
+    checkpoint_files = sorted(
+        load_dir.glob(f"{cfg.model_name.replace('/', '--')}*.pt"),
+        key=lambda p: p.stat().st_mtime,  # Sort by last modified time
+        reverse=True  # Newest checkpoint first
+    )
 
-    model_checkpoint = torch.load(full_state_dict_model_path)
-    # integrate into loaded model
-    model.load_state_dict(model_checkpoint)
+    # If no checkpoint is found, return
+    if not checkpoint_files:
+        print(f"WARNING: No checkpoint found in {load_dir}. Training will start from scratch.")
+        return
 
-    
-    print(f"model checkpoint loaded to rank0 cpu")
+    latest_checkpoint_path = checkpoint_files[0]
+    print(f"--> Loading latest checkpoint: {latest_checkpoint_path}")
+
+    # Load checkpoint
+    model_checkpoint = torch.load(latest_checkpoint_path, map_location="cpu")
+
+    fsdp_state = FullStateDictConfig(state_dict_type=StateDictType.FULL_STATE_DICT)
+    with FSDP.state_dict_type(model, fsdp_state):
+        model.load_state_dict(model_checkpoint["model_state_dict"])
+
+    print(f"Model checkpoint successfully loaded from {latest_checkpoint_path} to rank 0 CPU")
 
 
 def save_optimizer_checkpoint(model, optimizer, rank, cfg, epoch=1):
@@ -226,27 +245,50 @@ def save_optimizer_checkpoint(model, optimizer, rank, cfg, epoch=1):
         print(f"--> saved {opt_save_full_path} to disk")
 
 
-def load_optimizer_checkpoint(model, optimizer_checkpoint_path, rank):
+def load_optimizer_checkpoint(model, rank, cfg):
     """load an fsdp optimizer full_state checkpoint using scatter method
     this ensures only rank 0 loads the optimizer state dict and scatters to other ranks
     """
 
-
-    if not optimizer_checkpoint_path.is_file():
-        print(
-            f"warning - optimizer checkpoint not present {optimizer_checkpoint_path}. Returning. "
-        )
+    if rank != 0:
         return
 
-    full_osd = None
+    # Construct the checkpoint folder path
+    folder_name = (
+        cfg.dist_checkpoint_root_folder
+        + "/"
+        + cfg.dist_checkpoint_folder
+        + "-"
+        + cfg.model_name
+    )
+    load_dir = Path.cwd() / folder_name
 
-    if rank == 0:
-        full_osd = torch.load(optimizer_checkpoint_path)
+    if not load_dir.exists():
+        print(f"WARNING: Checkpoint directory {load_dir} does not exist. Skipping optimizer load.")
+        return
+
+    # Find the latest optimizer checkpoint by modification time
+    optimizer_files = sorted(
+        load_dir.glob(f"optimizer-{cfg.model_name}*.pt"),
+        key=lambda p: p.stat().st_mtime,  # Sort by last modified time
+        reverse=True  # Newest checkpoint first
+    )
+
+    # If no optimizer checkpoint is found, return
+    if not optimizer_files:
+        print(f"WARNING: No optimizer checkpoint found in {load_dir}. Training will start fresh.")
+        return
+
+    latest_optimizer_checkpoint = optimizer_files[0]
+    print(f"--> Loading latest optimizer checkpoint: {latest_optimizer_checkpoint}")
+
+    # Load checkpoint only on rank 0
+    full_osd = torch.load(latest_optimizer_checkpoint) if rank == 0 else None
 
     # called from all ranks, though only rank0 has a valid param for full_osd
     sharded_osd = FSDP.scatter_full_optim_state_dict(full_osd, model)
 
-    print(f"optimizer shard loaded on rank {rank}")
+    print(f"Optimizer checkpoint successfully loaded on rank {rank}")
 
 def load_sharded_model_single_gpu(model,model_path):
     
