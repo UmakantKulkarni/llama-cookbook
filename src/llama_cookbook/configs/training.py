@@ -36,7 +36,7 @@ class train_config:
     use_peft: bool=False # use parameter efficient fine tuning
     from_peft_checkpoint: str="" # if not empty and use_peft=True, will load the peft checkpoint and resume the fine-tuning on that checkpoint
     output_dir: str = "/proj/sfcs-PG0/fiveg_llm/models/cp_output"
-    freeze_layers: bool = False
+    freeze_layers: bool = True
     num_freeze_layers: int = 1
     freeze_LLM_only: bool = False # Freeze self-attention layers in the language_model. Vision model, multi_modal_projector, cross-attention will be fine-tuned
     quantization: str = None

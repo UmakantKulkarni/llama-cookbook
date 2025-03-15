@@ -181,7 +181,7 @@ def load_model_checkpoint(model, rank, cfg):
     load_dir = Path.cwd() / folder_name
 
     if not load_dir.exists():
-        print(f"WARNING: Checkpoint directory {load_dir} does not exist. Skipping optimizer load.")
+        print(f"WARNING: Checkpoint directory {load_dir} does not exist. Skipping model load.")
         return
 
     # Find the latest checkpoint by modification time
