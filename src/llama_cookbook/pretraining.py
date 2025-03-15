@@ -138,6 +138,7 @@ def setup_wandb(train_config, fsdp_config, **kwargs):
 
 
 def main(**kwargs):
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
     # Update the configuration for the training and sharding process
     train_config, fsdp_config = TRAIN_CONFIG(), FSDP_CONFIG()
     update_config((train_config, fsdp_config), **kwargs)
@@ -361,7 +362,8 @@ def main(**kwargs):
         model = FSDP(
             model,
             auto_wrap_policy=(
-                my_auto_wrapping_policy if train_config.use_peft else wrapping_policy
+                #my_auto_wrapping_policy if train_config.use_peft else wrapping_policy
+                my_auto_wrapping_policy
             ),
             cpu_offload=(
                 CPUOffload(offload_params=True)
