@@ -203,9 +203,9 @@ def load_model_checkpoint(model, rank, cfg):
     # Load checkpoint
     model_checkpoint = torch.load(latest_checkpoint_path, map_location="cpu")
 
-    fsdp_state = FullStateDictConfig(state_dict_type=StateDictType.FULL_STATE_DICT)
-    with FSDP.state_dict_type(model, fsdp_state):
-        model.load_state_dict(model_checkpoint["model_state_dict"])
+    fsdp_state = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+    with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, fsdp_state):
+        model.load_state_dict(model_checkpoint)
 
     print(f"Model checkpoint successfully loaded from {latest_checkpoint_path} to rank 0 CPU")
 
