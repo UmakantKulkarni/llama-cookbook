@@ -316,10 +316,14 @@ def load_full_sharded_model_single_gpu(model, model_path):
         reverse=True
     )
 
-    if not checkpoint_files:
+    model_checkpoint_files = [
+        f for f in checkpoint_files if not f.name.startswith("optimizer-")
+    ]
+
+    if not model_checkpoint_files:
         raise FileNotFoundError(f"No .pt checkpoint found in {model_path}")
 
-    latest_checkpoint = checkpoint_files[0]
+    latest_checkpoint = model_checkpoint_files[0]
     print(f"Loading model checkpoint from {latest_checkpoint}")
 
     # Load .pt checkpoint

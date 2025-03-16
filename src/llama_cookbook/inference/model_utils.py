@@ -60,6 +60,7 @@ def load_llama_from_config(config_path, is_fiveg_model='False'):
         model = MllamaForConditionalGeneration(config=config)
     elif config.model_type == "llama":
         if is_fiveg_model == 'True':
+            print("Loading FivegLlamaForCausalLM Model")
             config.spec_kg_embedding_dim = 256
             config.code_kg_embedding_dim = 256
             config.num_spec_features = 502
