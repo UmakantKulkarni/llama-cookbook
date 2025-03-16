@@ -377,7 +377,7 @@ def main(**kwargs):
             device_mesh=hsdp_device_mesh_plan,
             device_id=device_id,
             limit_all_gathers=True,
-            sync_module_states=train_config.low_cpu_fsdp,
+            sync_module_states=train_config.low_cpu_fsdp, #must be true for fsdp without lora when model is loaded on rank 0 only from a saved checkpoint - check load_model_checkpoint
             param_init_fn=(
                 (
                     lambda module: module.to_empty(
@@ -499,6 +499,7 @@ def main(**kwargs):
             print(f"--> Num of Validation Set Batches loaded = {len(eval_dataloader)}")
 
     # Initialize the optimizer and learning rate scheduler
+    optimizer = None
     if fsdp_config.pure_bf16 and fsdp_config.optimizer == "anyprecision":
         optimizer = AnyPrecisionAdamW(
             model.parameters(),
@@ -515,7 +516,7 @@ def main(**kwargs):
             weight_decay=train_config.weight_decay,
         )
     if train_config.load_dist_checkpoint:
-        load_optimizer_checkpoint(model, rank, train_config)
+        load_optimizer_checkpoint(model, optimizer, rank, train_config)
     scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
     results = train(
         model,

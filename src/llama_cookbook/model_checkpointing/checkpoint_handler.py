@@ -240,13 +240,10 @@ def save_optimizer_checkpoint(model, optimizer, rank, cfg, epoch=1):
         print(f"--> saved {opt_save_full_path} to disk")
 
 
-def load_optimizer_checkpoint(model, rank, cfg):
+def load_optimizer_checkpoint(model, optimizer, rank, cfg):
     """load an fsdp optimizer full_state checkpoint using scatter method
     this ensures only rank 0 loads the optimizer state dict and scatters to other ranks
     """
-
-    if rank != 0:
-        return
 
     # Construct the checkpoint folder path
     folder_name = (
@@ -259,7 +256,8 @@ def load_optimizer_checkpoint(model, rank, cfg):
     load_dir = Path.cwd() / folder_name
 
     if not load_dir.exists():
-        print(f"WARNING: Checkpoint directory {load_dir} does not exist. Skipping optimizer load.")
+        if rank == 0:
+            print(f"WARNING: Checkpoint directory {load_dir} does not exist. Skipping optimizer load.")
         return
 
     # Find the latest optimizer checkpoint by modification time
@@ -271,17 +269,22 @@ def load_optimizer_checkpoint(model, rank, cfg):
 
     # If no optimizer checkpoint is found, return
     if not optimizer_files:
-        print(f"WARNING: No optimizer checkpoint found in {load_dir}. Training will start fresh.")
+        if rank == 0:
+            print(f"WARNING: No optimizer checkpoint found in {load_dir}. Training will start fresh.")
         return
 
     latest_optimizer_checkpoint = optimizer_files[0]
-    print(f"--> Loading latest optimizer checkpoint: {latest_optimizer_checkpoint}")
-
-    # Load checkpoint only on rank 0
-    full_osd = torch.load(latest_optimizer_checkpoint) if rank == 0 else None
+    full_osd = None
+    if rank == 0:
+        print(f"--> Loading latest optimizer checkpoint: {latest_optimizer_checkpoint}")
+        # Load checkpoint only on rank 0
+        full_osd = torch.load(latest_optimizer_checkpoint) if rank == 0 else None
 
     # called from all ranks, though only rank0 has a valid param for full_osd
     sharded_osd = FSDP.scatter_full_optim_state_dict(full_osd, model)
+
+    # All ranks load optimizer shard
+    optimizer.load_state_dict(sharded_osd)
 
     print(f"Optimizer checkpoint successfully loaded on rank {rank}")
 
