@@ -21,12 +21,12 @@ parent_directory = os.path.dirname(current_directory)
 
 # Append the parent directory to sys.path
 sys.path.append(parent_directory)
-from model_checkpointing import load_sharded_model_single_gpu
+from model_checkpointing import load_sharded_model_single_gpu, load_full_sharded_model_single_gpu
 
 
 def main(
-    fsdp_checkpoint_path="",  # Path to FSDP Sharded model checkpoints
-    consolidated_model_path="",  # Path to save the HF converted model checkpoints
+    fsdp_checkpoint_path="/proj/sfcs-PG0/fiveg_llm/models/continual_pretrain-meta-llama/Llama-3.1-8B",  # Path to FSDP Sharded model checkpoints
+    consolidated_model_path="/proj/sfcs-PG0/fiveg_llm/models/hf_model",  # Path to save the HF converted model checkpoints
     HF_model_path_or_name="",  # Path/ name of the HF model that include config.json and tokenizer_config.json (e.g. meta-llama/Llama-2-7b-chat-hf)
 ):
 
@@ -54,7 +54,8 @@ def main(
     model_def = load_llama_from_config(HF_model_path_or_name)
     print("model is loaded from config")
     # load the FSDP sharded checkpoints into the model
-    model = load_sharded_model_single_gpu(model_def, fsdp_checkpoint_path)
+    # model = load_sharded_model_single_gpu(model_def, fsdp_checkpoint_path)
+    model = load_full_sharded_model_single_gpu(model_def, fsdp_checkpoint_path)
     print("model is loaded from FSDP checkpoints")
     # loading the tokenizer form the  model_path
     config = AutoConfig.from_pretrained(HF_model_path_or_name)

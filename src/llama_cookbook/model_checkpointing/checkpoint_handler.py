@@ -307,6 +307,29 @@ def load_sharded_model_single_gpu(model,model_path):
     print(f"Sharded state checkpoint loaded from {model_path}")
     return model
 
+
+def load_full_sharded_model_single_gpu(model, model_path):
+    # Find latest .pt file
+    checkpoint_files = sorted(
+        Path(model_path).glob("*.pt"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True
+    )
+
+    if not checkpoint_files:
+        raise FileNotFoundError(f"No .pt checkpoint found in {model_path}")
+
+    latest_checkpoint = checkpoint_files[0]
+    print(f"Loading model checkpoint from {latest_checkpoint}")
+
+    # Load .pt checkpoint
+    checkpoint = torch.load(latest_checkpoint, map_location="cpu")
+    model.load_state_dict(checkpoint)
+
+    print(f"Model checkpoint loaded from {latest_checkpoint}")
+    return model
+
+
 def save_peft_checkpoint(model, model_path, tokenizer = None):
     """save_pretrained peft model"""
 
