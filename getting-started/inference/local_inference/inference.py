@@ -17,8 +17,8 @@ from transformers import AutoTokenizer
 
 
 def main(
-    model_name: str = "meta-llama/Llama-3.1-8B-Instruct",
-    peft_model: str = "/opt/llama-cookbook/output",
+    model_name: str = "/proj/sfcs-PG0/fiveg_llm/models/hf_model",
+    peft_model: str = "", # "/opt/llama-cookbook/output",
     quantization: str = "4bit", # Options: 4bit, 8bit
     max_new_tokens=4096,  # The maximum numbers of tokens to generate
     prompt_file: str = None, # "open5gs_prompt.txt",  # The file containing the prompt
