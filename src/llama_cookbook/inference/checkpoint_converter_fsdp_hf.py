@@ -30,6 +30,7 @@ def main(
     HF_model_path_or_name="",  # Path/ name of the HF model that include config.json and tokenizer_config.json (e.g. meta-llama/Llama-2-7b-chat-hf)
 ):
 
+    data = None
     try:
         file_name = "train_params.yaml"
         # Combine the directory and file name to create the full path
@@ -51,7 +52,7 @@ def main(
         print(f"An error occurred: {e}")
 
     # load the HF model definition from config
-    model_def = load_llama_from_config(HF_model_path_or_name)
+    model_def = load_llama_from_config(HF_model_path_or_name, is_fiveg_model=data.get("is_fiveg_model", 'False'))
     print("model is loaded from config")
     # load the FSDP sharded checkpoints into the model
     # model = load_sharded_model_single_gpu(model_def, fsdp_checkpoint_path)

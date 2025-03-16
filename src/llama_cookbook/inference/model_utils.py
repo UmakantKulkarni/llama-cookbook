@@ -14,7 +14,7 @@ from transformers import (
     MllamaConfig,
     MllamaForConditionalGeneration,
 )
-
+from llama_cookbook.FivegModel import FivegLlamaForCausalLM
 
 # Function to load the main model for text generation
 def load_model(model_name, quantization, use_fast_kernels, **kwargs):
@@ -54,12 +54,21 @@ def load_peft_model(model, peft_model):
 
 
 # Loading the model from config to load FSDP checkpoints into that
-def load_llama_from_config(config_path):
+def load_llama_from_config(config_path, is_fiveg_model='False'):
     config = AutoConfig.from_pretrained(config_path)
     if config.model_type == "mllama":
         model = MllamaForConditionalGeneration(config=config)
     elif config.model_type == "llama":
-        model = LlamaForCausalLM(config=config)
+        if is_fiveg_model == 'True':
+            config.spec_kg_embedding_dim = 256
+            config.code_kg_embedding_dim = 256
+            config.num_spec_features = 502
+            config.num_code_features = 37
+            config.spec_num_fiveg_heads = 8
+            config.code_num_fiveg_heads = 8
+            model = FivegLlamaForCausalLM(config=config)
+        else:
+            model = LlamaForCausalLM(config=config)
     else:
         raise ValueError(
             f"Unsupported model type: {config.model_type}, Please use llama or mllama model."
