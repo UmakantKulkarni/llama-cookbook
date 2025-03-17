@@ -262,7 +262,7 @@ def main(**kwargs):
         train_config.model_name
         if train_config.tokenizer_name is None
         else train_config.tokenizer_name,
-        use_fast=False,
+        trust_remote_code=True,
     )
     if not tokenizer.pad_token_id:
         tokenizer.pad_token_id = tokenizer.eos_token_id
