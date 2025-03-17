@@ -148,12 +148,12 @@ def save_fsdp_model_checkpoint_full(
         cfg.dist_checkpoint_root_folder
         + "/"
         + cfg.dist_checkpoint_folder
-        + "-"
-        + cfg.model_name
+        # + "-"
+        # + cfg.model_name
         )
         save_dir = Path.cwd() / folder_name
         save_dir.mkdir(parents=True, exist_ok=True)
-        save_name = cfg.model_name.replace("/","_") + "-" + str(epoch) + ".pt"
+        save_name = "llama-" + str(epoch) + ".pt"
         save_full_path = os.path.join(str(save_dir), save_name)
 
         # save model
@@ -176,8 +176,8 @@ def load_model_checkpoint(model, rank, cfg):
         cfg.dist_checkpoint_root_folder
         + "/"
         + cfg.dist_checkpoint_folder
-        + "-"
-        + cfg.model_name
+        # + "-"
+        # + cfg.model_name
     )
     load_dir = Path.cwd() / folder_name
 
@@ -187,7 +187,7 @@ def load_model_checkpoint(model, rank, cfg):
 
     # Find the latest checkpoint by modification time
     checkpoint_files = sorted(
-        load_dir.glob(f"{cfg.model_name.replace('/', '_')}*.pt"),
+        load_dir.glob(f"llama-*.pt"),
         key=lambda p: p.stat().st_mtime,  # Sort by last modified time
         reverse=True  # Newest checkpoint first
     )
@@ -225,12 +225,12 @@ def save_optimizer_checkpoint(model, optimizer, rank, cfg, epoch=1):
         cfg.dist_checkpoint_root_folder
         + "/"
         + cfg.dist_checkpoint_folder
-        + "-"
-        + cfg.model_name
+        # + "-"
+        # + cfg.model_name
         )
         save_dir = Path.cwd() / folder_name
         save_dir.mkdir(parents=True, exist_ok=True)
-        save_name = "optimizer-" + cfg.model_name.replace("/","_") + "-" + str(epoch) + ".pt"
+        save_name = "optimizer-" + str(epoch) + ".pt"
         opt_save_full_path = os.path.join(str(save_dir), save_name)
 
         print(f"--> saving optimizer state...")
@@ -250,8 +250,8 @@ def load_optimizer_checkpoint(model, optimizer, rank, cfg):
         cfg.dist_checkpoint_root_folder
         + "/"
         + cfg.dist_checkpoint_folder
-        + "-"
-        + cfg.model_name
+        # + "-"
+        # + cfg.model_name
     )
     load_dir = Path.cwd() / folder_name
 
@@ -262,7 +262,7 @@ def load_optimizer_checkpoint(model, optimizer, rank, cfg):
 
     # Find the latest optimizer checkpoint by modification time
     optimizer_files = sorted(
-        load_dir.glob(f"optimizer-{cfg.model_name.replace('/', '_')}*.pt"),
+        load_dir.glob(f"optimizer-*.pt"),
         key=lambda p: p.stat().st_mtime,  # Sort by last modified time
         reverse=True  # Newest checkpoint first
     )
