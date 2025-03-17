@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 @dataclass
 class train_config:
-    model_name: str= "/proj/sfcs-PG0/fiveg_llm/models/hf_model" #"meta-llama/Llama-3.1-8B"
+    model_name: str= "meta-llama/Llama-3.1-8B" #"/proj/sfcs-PG0/fiveg_llm/models/hf_model"
     is_fiveg_model: bool = True
     continue_pretrain: bool = True
     tokenizer_name: str=None

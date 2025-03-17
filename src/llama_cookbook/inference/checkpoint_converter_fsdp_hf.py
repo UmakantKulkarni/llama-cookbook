@@ -25,7 +25,7 @@ from model_checkpointing import load_sharded_model_single_gpu, load_full_sharded
 
 
 def main(
-    fsdp_checkpoint_path="/proj/sfcs-PG0/fiveg_llm/models/continual_pretrain-meta-llama/Llama-3.1-8B",  # Path to FSDP Sharded model checkpoints
+    fsdp_checkpoint_path="/proj/sfcs-PG0/fiveg_llm/models/continual_pretrain",  # Path to FSDP Sharded model checkpoints
     consolidated_model_path="/proj/sfcs-PG0/fiveg_llm/models/hf_model",  # Path to save the HF converted model checkpoints
     HF_model_path_or_name="",  # Path/ name of the HF model that include config.json and tokenizer_config.json (e.g. meta-llama/Llama-2-7b-chat-hf)
 ):
