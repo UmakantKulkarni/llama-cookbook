@@ -333,7 +333,7 @@ def main(**kwargs):
         )
         if fsdp_config.fsdp_activation_checkpointing:
             model.enable_input_require_grads()
-            model.gradient_checkpointing_enable()
+            model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
             apply_fsdp_checkpointing(model)
     elif not train_config.quantization and not train_config.enable_fsdp:
         if is_xpu_available():
