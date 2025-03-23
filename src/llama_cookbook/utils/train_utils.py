@@ -429,10 +429,10 @@ def freeze_transformer_layers_pretrain(
     for name, param in model.named_parameters():
         # Default: requires_grad=True unless we find a match below
         if freeze_base:
-            print("Freezing base layers")
+            # print("Freezing base layers")
             param.requires_grad = False
         else:
-            print("Not Freezing base layers")
+            # print("Not Freezing base layers")
             param.requires_grad = True
 
         # 1) Freeze all base LLaMA layers if freeze_base is True
@@ -449,29 +449,29 @@ def freeze_transformer_layers_pretrain(
         # 2) Freeze domain adapter if freeze_domain is True
         #    Typically your domain adapter parameters appear as "domain_adapter" in the name
         if not freeze_domain:
-            print("Not Freezing domain layer")
+            # print("Not Freezing domain layer")
             if "domain_adapter" in name:
                 param.requires_grad = True
 
         # 3) Freeze code adapter if freeze_code is True
         #    Typically your code adapter parameters appear as "code_adapter" in the name
         if not freeze_code:
-            print("Not Freezing code layer")
+            # print("Not Freezing code layer")
             if "code_adapter" in name:
                 param.requires_grad = True
 
         if not freeze_kca:
-            print("Not Freezing kca layer")
+            # print("Not Freezing kca layer")
             if "kca" in name:
                 param.requires_grad = True
 
         if not freeze_lca:
-            print("Not Freezing lca layer")
+            # print("Not Freezing lca layer")
             if "logs_cross_attn" in name:
                 param.requires_grad = True
 
         if not freeze_cca:
-            print("Not Freezing cca layer")
+            # print("Not Freezing cca layer")
             if "config_cross_attn" in name:
                 param.requires_grad = True
 
