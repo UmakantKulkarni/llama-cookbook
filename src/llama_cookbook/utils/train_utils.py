@@ -409,19 +409,71 @@ def freeze_transformer_layers(model, num_layer):
                 for param in layer.parameters():
                     param.requires_grad = False
 
-def freeze_transformer_layers_pretrain(model, freeze_base=True):
+def freeze_transformer_layers_pretrain(
+    model, 
+    freeze_base: bool = True,
+    freeze_domain: bool = False,
+    freeze_code: bool = True,
+    freeze_kca: bool = False,
+    freeze_lca: bool = True,
+    freeze_cca: bool = True
+):
     """
-    Generalized function to freeze transformer layers.
-    
-    - freeze_base=True  → Freezes all base LLaMA layers, keeps 5G layers trainable.
-    - freeze_base=False → Keeps all layers trainable (full fine-tuning).
+    Freezes or unfreezes subsets of layers in a FivegLlamaForCausalLM-like model.
+
+    :param model: The entire model (e.g., FivegLlamaForCausalLM)
+    :param freeze_base: If True, freezes the original LLaMA self-attn and MLP layers.
+    :param freeze_domain: If True, freezes domain adapter layers (e.g., DomainAdapter).
+    :param freeze_code: If True, freezes code adapter layers (e.g., CodeAdapter).
     """
-    
     for name, param in model.named_parameters():
-        if freeze_base and ("spec_fiveg_knowledge_layer" not in name and "code_fiveg_knowledge_layer" not in name):
-            param.requires_grad = False  # Freeze all original LLaMA layers
+        # Default: requires_grad=True unless we find a match below
+        if freeze_base:
+            print("Freezing base layers")
+            param.requires_grad = False
         else:
-            param.requires_grad = True   # Keep 5G layers trainable
+            print("Not Freezing base layers")
+            param.requires_grad = True
+
+        # 1) Freeze all base LLaMA layers if freeze_base is True
+        #    These typically appear as "self_attn", "mlp", "input_layernorm", "post_attention_layernorm", etc.
+        #    Or they might appear under "layers.X.self_attn" or "layers.X.mlp"
+        # if freeze_base:
+        #     print("Freezing base layers")
+        #     if any(base_key in name for base_key in ["self_attn", "mlp", "input_layernorm", "post_attention_layernorm"]):
+        #         param.requires_grad = False
+            # Also might freeze final "norm" or "embed_tokens" if you truly want the entire base frozen
+            # if any(final_base_key in name for final_base_key in ["norm", "embed_tokens"]):
+            #     param.requires_grad = False
+
+        # 2) Freeze domain adapter if freeze_domain is True
+        #    Typically your domain adapter parameters appear as "domain_adapter" in the name
+        if not freeze_domain:
+            print("Not Freezing domain layer")
+            if "domain_adapter" in name:
+                param.requires_grad = True
+
+        # 3) Freeze code adapter if freeze_code is True
+        #    Typically your code adapter parameters appear as "code_adapter" in the name
+        if not freeze_code:
+            print("Not Freezing code layer")
+            if "code_adapter" in name:
+                param.requires_grad = True
+
+        if not freeze_kca:
+            print("Not Freezing kca layer")
+            if "kca" in name:
+                param.requires_grad = True
+
+        if not freeze_lca:
+            print("Not Freezing lca layer")
+            if "logs_cross_attn" in name:
+                param.requires_grad = True
+
+        if not freeze_cca:
+            print("Not Freezing cca layer")
+            if "config_cross_attn" in name:
+                param.requires_grad = True
 
 
 def freeze_LLM_only(model):

@@ -263,7 +263,7 @@ def main(**kwargs):
 
         if not train_config.use_peft and train_config.freeze_layers:
             if train_config.continue_pretrain:
-                freeze_transformer_layers_pretrain(model, freeze_base=True)
+                freeze_transformer_layers_pretrain(model, freeze_base=True, freeze_domain=False, freeze_code=True, freeze_cca=True, freeze_kca=False, freeze_lca=True)
             else:
                 freeze_transformer_layers(model, train_config.num_freeze_layers)
             # print model size and frozen layers after freezing layers
