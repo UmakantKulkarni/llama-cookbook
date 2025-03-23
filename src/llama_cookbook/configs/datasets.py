@@ -53,3 +53,9 @@ class code3gpp_dataset:
     spec_feature_vocab_size: int = 502
     code_feature_vocab_size: int = 37
     is_fiveg_model: bool = True
+
+@dataclass
+class fivegcpt_dataset:
+    dataset: str = "fivegcpt_dataset"
+    train_split: str = "train"
+    test_split: str = "test"

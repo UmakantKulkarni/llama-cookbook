@@ -15,62 +15,6 @@ CODE_FEATURE_EMBEDDING_DIM = 32   # Example dimension for code features
 DATASET_JSON_FILE = "/opt/llama-cookbook/ts_3gpp_dataset.json"
 SOURCE_CODE_DATASET_JSON_FILE = "/opt/llama-cookbook/open5gs_srcode_dataset.json"  # Path to your source code dataset
 
-# Example: your protocol feature vocabulary (initially empty, will be populated)
-# PROTOCOL_FEATURE_VOCAB = {}
-
-# Define Code Feature Vocabulary
-CODE_FEATURE_VOCAB = {
-    "filetype": [
-        "config",
-        "src",
-        "test",
-        "deployment",
-    ],
-    "extention": [
-        "c",
-        "h",
-        "py",
-        "yaml",
-        "cfg",
-        "ini",
-        "sh",
-        "perl",
-        "tcl",
-        "yml",
-        "json",
-        "txt",
-        "in",
-        "build",
-        "conf",
-    ],
-    "functionality": [
-        "5g call setup",
-        "handover",
-        "kubernetes deployment",
-        "routing",
-    ],
-    "directory": [
-        "src",
-        "config",
-        "tests",
-        "deploy",
-        "docker",
-    ],
-    "nf": [
-        "amf",
-        "smf",
-        "upf",
-        "all"
-    ],
-    "interface": [
-        "namf",
-        "nsmf",
-        "nudm",
-        "nudr",
-        "management"
-    ]
-}
-
 
 def filter_3gpp_dataset(fiveg_only=True,lte_only=False,common=False):
     dataset_dir = os.path.dirname(DATASET_JSON_FILE)
@@ -253,6 +197,73 @@ class TS3GPPDataset(Dataset):
         }
 
 
+
+class TS3GPPDatasetCPT(Dataset):
+    """
+    A Dataset wrapping both 3GPP spec items (type='spec') and code items (type='code').
+    It returns 'fiveg_feature_indices' for spec items and 'code_feature_indices' for code items.
+    """
+    def __init__(self, data, tokenizer):
+        self.data = data
+        self.tokenizer = tokenizer
+    
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        item = self.data[idx]
+        text = item.get("content", "")
+        if not isinstance(text, str):
+            text = str(text)
+        item_type = item.get("type", "unknown")  # 'spec' or 'code'
+
+        tokenized_output = self.tokenizer(
+            text,
+            truncation=True,
+            padding="max_length",
+            max_length=2048,
+            return_tensors="pt"
+        )
+
+        input_ids = tokenized_output["input_ids"].squeeze(0).tolist()
+        attention_mask = tokenized_output["attention_mask"].squeeze(0).tolist()
+        labels = input_ids.copy()  # Copy list
+        labels = [-100 if token == self.tokenizer.pad_token_id else token for token in labels]
+
+        fiveg_feature_indices_list = [-1] * self.fiveg_feature_size
+        code_feature_indices_list = [-1] * self.code_feature_size
+
+        if item_type == "spec":
+            feature_values = {
+                "specnumber": item.get("specnumber"),
+                "series": item.get("series"),
+                "technology": item.get("technology"),
+                "topic": item.get("topic"),
+                "specwg": item.get("specwg"),
+                "specipr": item.get("specipr"),
+            }
+
+        elif item_type == "code":
+            code_feature_values = {
+                "filetype": item.get("filetype"),
+                "extention": item.get("extention"),
+                "functionality": item.get("functionality"),
+                "directory": item.get("directory"),
+                "nf": item.get("nf"),
+                "interface": item.get("interface"),
+            }
+
+        else:
+            raise ValueError(f"Unknown item type: {item_type}. Must be 'spec' or 'code'.")
+
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
+        }
+
+
 def split_spec_data(combined_data, split, test_size_percent=0.2):
     """Splits spec data (list of dictionaries) into train and test sets using slicing."""
 
@@ -291,18 +302,6 @@ def get_code3gpp_dataset(dataset_config, tokenizer, split: str):
 
     df_spec = filter_3gpp_dataset(fiveg_only=True,lte_only=False,common=False)
     spec_data = df_spec.to_dict(orient="records")
-
-    # Example: Build your “protocol” (fiveg) feature vocab from the spec DataFrame
-    FIVEG_FEATURE_VOCAB = {
-        "specnumber": df_spec["specnumber"].unique().tolist(),
-        "series": df_spec["series"].unique().tolist(),
-        "technology": df_spec["technology"].explode().unique().tolist(),
-        "topic": df_spec["topic"].explode().unique().tolist(),
-        "specwg": df_spec["specwg"].unique().tolist(),
-        "specipr": df_spec["specipr"].unique().tolist(),
-    }
-    print("FiveG (Protocol) feature vocabulary:")
-    #print(json.dumps(FIVEG_FEATURE_VOCAB, indent=4))
 
     if 0:
         # -- Load Source Code data --
@@ -343,8 +342,6 @@ def get_code3gpp_dataset(dataset_config, tokenizer, split: str):
     dataset = TS3GPPDataset(
         data=data,
         tokenizer=tokenizer,
-        fiveg_feature_vocab=FIVEG_FEATURE_VOCAB,
-        code_feature_vocab=CODE_FEATURE_VOCAB
     )
     return dataset
 
@@ -356,14 +353,14 @@ def get_code3gpp_data_collator(tokenizer, dataset_config):
     """
     if dataset_config.is_fiveg_model:
         print("Using Modified Data Collator")
-        from llama_cookbook.FivegModel import FivegDataCollatorForLanguageModeling
+        from llama_cookbook.FivegModel1 import FivegDataCollatorForLanguageModeling
 
         # Match collator’s expected argument names
         return FivegDataCollatorForLanguageModeling(
             tokenizer=tokenizer,
             mlm=False,  # For continual pre-training with causal LM
             fiveg_feature_vocab_size=0,  # Will fix below—example or real sum
-            code_feature_vocab=CODE_FEATURE_VOCAB,
+            code_feature_vocab={}, #CODE_FEATURE_VOCAB,
             fiveg_feature_embedding_dim=FIVEG_FEATURE_EMBEDDING_DIM,
             code_feature_embedding_dim=CODE_FEATURE_EMBEDDING_DIM,
         )

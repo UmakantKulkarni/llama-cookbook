@@ -10,6 +10,7 @@ from llama_cookbook.datasets.samsum_dataset import get_preprocessed_samsum as ge
 from llama_cookbook.datasets.toxicchat_dataset import get_llamaguard_toxicchat_dataset as get_llamaguard_toxicchat_dataset
 from llama_cookbook.datasets.dataset_5g import get_5g_dataset as get_5g_dataset
 from llama_cookbook.datasets.code3gpp_dataset import get_code3gpp_dataset, get_code3gpp_data_collator
+from llama_cookbook.datasets.fivegcpt_dataset import get_fivegcpt_dataset as get_fivegcpt_dataset
 DATASET_PREPROC = {
     "alpaca_dataset": partial(get_alpaca_dataset),
     "grammar_dataset": get_grammar_dataset,
@@ -18,6 +19,7 @@ DATASET_PREPROC = {
     "llamaguard_toxicchat_dataset": get_llamaguard_toxicchat_dataset,
     "open5gs_dataset": get_5g_dataset,
     "code3gpp_dataset": get_code3gpp_dataset,
+    "fivegcpt_dataset": get_fivegcpt_dataset,
 }
 DATALOADER_COLLATE_FUNC = {
     "custom_dataset": get_data_collator,

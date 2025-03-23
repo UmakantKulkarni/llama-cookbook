@@ -65,7 +65,7 @@ from transformers.models.mllama.modeling_mllama import (
     MllamaVisionEncoderLayer,
 )
 from llama_cookbook.model_checkpointing import load_model_checkpoint, load_optimizer_checkpoint
-from llama_cookbook.FivegModel import FivegLlamaForCausalLM, FivegLlamaDecoderLayer
+from llama_cookbook.FivegModel1 import FivegLlamaForCausalLM, FivegLlamaDecoderLayer, FivegDataCollatorForLanguageModeling
 
 def setup_wandb(train_config, fsdp_config, **kwargs):
     try:
@@ -92,6 +92,10 @@ def main(**kwargs):
     train_config, fsdp_config = TRAIN_CONFIG(), FSDP_CONFIG()
     update_config((train_config, fsdp_config), **kwargs)
     dataset_config = generate_dataset_config(train_config, kwargs)
+    if dataset_config.dataset == "code3gpp_dataset":
+        dataset_config.is_fiveg_model = True
+    else:
+        dataset_config.is_fiveg_model = False
     # Set the seeds for reproducibility
     if is_xpu_available():
         torch.xpu.manual_seed(train_config.seed)
@@ -376,10 +380,30 @@ def main(**kwargs):
         train_config, dataset_train, dataset_processer, "train"
     )
     print("length of dataset_train", len(dataset_train))
-    custom_data_collator = get_custom_data_collator(dataset_processer, dataset_config)
-    if custom_data_collator:
-        print("custom_data_collator is used")
-        train_dl_kwargs["collate_fn"] = custom_data_collator
+    # custom_data_collator = get_custom_data_collator(dataset_processer, dataset_config)
+    # if custom_data_collator:
+    #     print("custom_data_collator is used")
+    #     train_dl_kwargs["collate_fn"] = custom_data_collator
+
+    # --- Modified Data Collator ---
+    def _custom_data_collator(dataset_processer, dataset_config):
+        if dataset_config.is_fiveg_model: # Flag to use modified data collator
+            print("Using Modified Data Collator")
+            return FivegDataCollatorForLanguageModeling(
+                tokenizer=dataset_processer,
+                mlm=False, # Set mlm=False for continual pre-training (causal LM)
+                spec_feature_vocab_size=dataset_config.spec_feature_vocab_size,  # e.g. from train_dataset.fiveg_feature_size
+                code_feature_vocab_size=dataset_config.code_feature_vocab_size,
+                spec_feature_embedding_dim=256,
+                code_feature_embedding_dim=256,
+            )
+        else:
+            print("Using Original Data Collator")
+            return get_custom_data_collator(dataset_processer, dataset_config) # Fallback to original if flag is not set
+
+    train_dl_kwargs["collate_fn"] = _custom_data_collator(dataset_processer, dataset_config)
+    # --- End Modified Data Collator ---
+
     # Create DataLoaders for the training and validation dataset
     train_dataloader = torch.utils.data.DataLoader(
         dataset_train,
@@ -402,9 +426,10 @@ def main(**kwargs):
         val_dl_kwargs = get_dataloader_kwargs(
             train_config, dataset_val, dataset_processer, "val"
         )
-        if custom_data_collator:
-            val_dl_kwargs["collate_fn"] = custom_data_collator
-        
+        # if custom_data_collator:
+        #     val_dl_kwargs["collate_fn"] = custom_data_collator
+        val_dl_kwargs["collate_fn"] = _custom_data_collator(dataset_processer, dataset_config) # Use modified data collator for validation as well
+
         eval_dataloader = torch.utils.data.DataLoader(
             dataset_val,
             num_workers=train_config.num_workers_dataloader,

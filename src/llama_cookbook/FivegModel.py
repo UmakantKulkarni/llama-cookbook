@@ -1,229 +1,308 @@
 #!/usr/bin/env python3
 import torch
-import numpy as np
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers.models.llama.configuration_llama import LlamaConfig
 from transformers.models.llama.modeling_llama import LlamaRMSNorm, LlamaDecoderLayer, LlamaRotaryEmbedding
-from transformers.models.llama.modeling_llama import LlamaForCausalLM as _LlamaForCausalLM
-from transformers.utils import add_start_docstrings, add_start_docstrings_to_model_forward, replace_return_docstrings, logging
-from transformers.modeling_flash_attention_utils import FlashAttentionKwargs
-from transformers.processing_utils import Unpack
+from transformers.utils import logging
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.cache_utils import Cache, DynamicCache, StaticCache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
-from transformers.utils import LossKwargs
-from typing import Optional, Tuple, Union, List, Dict, Tuple, Any, Mapping
-from transformers.models.llama.modeling_llama import LlamaModel as _LlamaModel
-from transformers.models.llama.modeling_llama import LLAMA_INPUTS_DOCSTRING, LLAMA_START_DOCSTRING, _CONFIG_FOR_DOC
-
-from dataclasses import dataclass
-from transformers import DataCollatorForLanguageModeling
-from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-from transformers.data.data_collator import _torch_collate_batch, _tf_collate_batch, pad_without_fast_tokenizer_warning, _numpy_collate_batch
-
+from typing import Optional, Tuple, Union, Tuple
+from transformers import LlamaPreTrainedModel, GenerationMixin
+from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
+from transformers.models.llama.modeling_llama import LlamaRMSNorm
+from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaRotaryEmbedding
+from transformers.generation.utils import GenerationMixin
+from transformers import logging
 
 logger = logging.get_logger(__name__)
 
-# --- 1. Define Modified Llama Model with Two Fiveg Embedding Layers ---
-class FivegEmbeddingAttentionLayer(nn.Module):
-    def __init__(self, config, num_fiveg_features, kg_embedding_dim): # kg_embedding_dim as argument
-        super().__init__()
-        self.fiveg_embedding = nn.Embedding(num_fiveg_features + 1, kg_embedding_dim) # Use passed kg_embedding_dim
-        self.W_q = nn.Linear(config.hidden_size, kg_embedding_dim, bias=True) # Bias added
-        self.W_k = nn.Linear(kg_embedding_dim, kg_embedding_dim, bias=True) # Bias added
-        self.W_v = nn.Linear(kg_embedding_dim, kg_embedding_dim, bias=True) # Bias added
-        self.W_o = nn.Linear(kg_embedding_dim, config.hidden_size, bias=True) # Bias added
-        self.attn_dropout = nn.Dropout(config.attention_dropout)
-        self.scale_factor = kg_embedding_dim**-0.5 # Scale factor for scaled dot product attention
 
+# -------------------------------------------------------------------------
+# 1. Helper Modules: DomainAdapter, CodeAdapter, KnowledgeConditionedAttention,
+#    and CrossAttention blocks for logs/config/code streams
+# -------------------------------------------------------------------------
 
-    def forward(self, hidden_states: torch.Tensor, fiveg_feature_indices: torch.Tensor, attention_mask: Optional[torch.Tensor] = None, head_mask: Optional[torch.Tensor] = None, output_attentions: bool = False) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        fiveg_embeddings = self.fiveg_embedding(fiveg_feature_indices) # B, L, kg_dim
-
-        query_layer = self.W_q(hidden_states) # B, L, kg_dim
-        key_layer = self.W_k(fiveg_embeddings) # B, L, kg_dim
-        value_layer = self.W_v(fiveg_embeddings) # B, L, kg_dim
-
-        attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2)) # B, L, L
-        attention_scores = attention_scores * self.scale_factor
-
-        if attention_mask is not None:
-            attention_scores = attention_scores.masked_fill(attention_mask == 0, float("-inf"))
-
-        attention_probs = nn.functional.softmax(attention_scores, dim=-1) # B, L, L
-        attention_probs = self.attn_dropout(attention_probs) # B, L, L
-
-        fiveg_aware_output = torch.matmul(attention_probs, value_layer) # B, L, kg_dim
-        fiveg_aware_output = self.W_o(fiveg_aware_output) # B, L, hidden_size
-
-        return fiveg_aware_output, None # Attention weights are not returned for now
-
-
-class FivegEmbeddingMultiHeadAttentionLayer(nn.Module):
+class DomainAdapterMLP(nn.Module):
     """
-    Classic multi-head attention variant for fiveg features.
-    
-    Args:
-        config: A config object containing:
-          - hidden_size (int): dimension of the main LLaMA hidden states
-          - attention_dropout (float): dropout probability for attention probs
-          - num_fiveg_heads (int): number of heads for fiveg attention (must be > 0)
-          
-        num_fiveg_features (int): number of unique fiveg feature indices
-        kg_embedding_dim (int): total dimension for the fiveg embeddings; must be 
-                                divisible by num_fiveg_heads for multi-head splitting.
+    A lightweight domain adapter for 5G knowledge.
+    Uses a simple bottleneck with SILU activation.
     """
-    def __init__(self, config, num_fiveg_features, kg_embedding_dim, num_fiveg_heads):
+    def __init__(self, hidden_size: int, adapter_size: int = 64):
         super().__init__()
-        if kg_embedding_dim % num_fiveg_heads != 0:
-            raise ValueError(
-                f"kg_embedding_dim={kg_embedding_dim} must be divisible by "
-                f"num_fiveg_heads={num_fiveg_heads}."
-            )
+        self.layernorm = nn.LayerNorm(hidden_size)
+        self.down_proj = nn.Linear(hidden_size, adapter_size, bias=False)
+        self.up_proj = nn.Linear(adapter_size, hidden_size, bias=False)
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        # LN -> down_proj -> SiLU -> up_proj -> + residual
+        residual = hidden_states
+        x = self.layernorm(hidden_states)
+        x = self.down_proj(x)
+        x = F.silu(x)
+        x = self.up_proj(x)
+        return residual + x
+
+
+class CodeAdapterMLP(nn.Module):
+    """
+    A lightweight adapter specialized for code.
+    Similar structure but can remain separate for clarity.
+    """
+    def __init__(self, hidden_size: int, adapter_size: int = 64):
+        super().__init__()
+        self.layernorm = nn.LayerNorm(hidden_size)
+        self.down_proj = nn.Linear(hidden_size, adapter_size, bias=False)
+        self.up_proj = nn.Linear(adapter_size, hidden_size, bias=False)
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        # LN -> down_proj -> SiLU -> up_proj -> + residual
+        residual = hidden_states
+        x = self.layernorm(hidden_states)
+        x = self.down_proj(x)
+        x = F.silu(x)
+        x = self.up_proj(x)
+        return residual + x
+
+
+class DomainAdapter(nn.Module):
+    """
+    A multi-head attention-based adapter for 5G knowledge.
+    We use a down-projection to a smaller dimension (adapter_size),
+    run a self-attention there, then up-project back to hidden_size.
+    """
+    def __init__(self, hidden_size: int, adapter_size: int = 64, num_heads: int = 4):
+        super().__init__()
+        # LN normalizes the input before we do anything
+        self.layernorm = nn.LayerNorm(hidden_size)
+
+        # Down-project from hidden_size -> adapter_size
+        self.down_proj = nn.Linear(hidden_size, adapter_size, bias=False)
+
+        # A multi-head self-attention at the adapter dimension.
+        # We use PyTorch's MultiheadAttention. Must set batch_first=True
+        # so shapes remain (B, L, E).
+        self.attn = nn.MultiheadAttention(embed_dim=adapter_size,
+                                          num_heads=num_heads,
+                                          batch_first=True)
+
+        # Up-project back to hidden_size
+        self.up_proj = nn.Linear(adapter_size, hidden_size, bias=False)
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        # Step 1) LN + residual handle
+        residual = hidden_states
+        x = self.layernorm(hidden_states)   # shape: (B, L, hidden_size)
+
+        # Step 2) Down project to smaller dimension
+        x = self.down_proj(x)               # shape: (B, L, adapter_size)
+
+        # Step 3) Multi-Head Self-Attention in adapter space
+        #   attn wants (B, L, E) => Q, K, V are all x
+        #   returns (B, L, E), _
+        attn_out, _ = self.attn(x, x, x, need_weights=False)
         
-        self.num_heads = num_fiveg_heads
-        self.head_dim = kg_embedding_dim // self.num_heads
-        self.kg_embedding_dim = kg_embedding_dim
+        # Step 4) Up project back to hidden_size
+        x = self.up_proj(attn_out)
 
-        # Embedding for domain-specific (fiveg) features
-        self.fiveg_embedding = nn.Embedding(num_fiveg_features + 1, kg_embedding_dim)
+        # Step 5) Residual
+        return residual + x
 
-        # Linear projections for Q, K, V
-        # Q maps from hidden_size -> kg_embedding_dim
-        self.W_q = nn.Linear(config.hidden_size, kg_embedding_dim, bias=True)
-        # K, V map from kg_embedding_dim -> kg_embedding_dim
-        # because the fiveg features are embedded at dimension kg_embedding_dim
-        self.W_k = nn.Linear(kg_embedding_dim, kg_embedding_dim, bias=True)
-        self.W_v = nn.Linear(kg_embedding_dim, kg_embedding_dim, bias=True)
 
-        # Final output projection back to hidden_size
-        self.W_o = nn.Linear(kg_embedding_dim, config.hidden_size, bias=True)
+class CodeAdapter(nn.Module):
+    """
+    A multi-head attention-based adapter specialized for code.
+    Same overall structure as DomainAdapter, but you could vary
+    num_heads or adapter_size if you want it to differ.
+    """
+    def __init__(self, hidden_size: int, adapter_size: int = 64, num_heads: int = 4):
+        super().__init__()
+        self.layernorm = nn.LayerNorm(hidden_size)
+        self.down_proj = nn.Linear(hidden_size, adapter_size, bias=False)
+        self.attn = nn.MultiheadAttention(embed_dim=adapter_size,
+                                          num_heads=num_heads,
+                                          batch_first=True)
+        self.up_proj = nn.Linear(adapter_size, hidden_size, bias=False)
 
-        # Dropout on attention probabilities
-        self.attn_dropout = nn.Dropout(config.attention_dropout)
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        residual = hidden_states
+        x = self.layernorm(hidden_states)
+        x = self.down_proj(x)
+        attn_out, _ = self.attn(x, x, x, need_weights=False)
+        x = self.up_proj(attn_out)
+        return residual + x
+
+
+class KnowledgeConditionedAttention(nn.Module):
+    """
+    Allows tokens to attend to a small learnable memory matrix,
+    storing repeated 5G patterns, code references, etc.
+    """
+    def __init__(self, hidden_size: int, memory_slots: int = 32, num_heads: int = 4):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.memory_slots = memory_slots
+        self.num_heads = num_heads
+        self.head_dim = hidden_size // num_heads
+
+        self.domain_memory = nn.Parameter(torch.randn(memory_slots, hidden_size))
+        nn.init.kaiming_normal_(self.domain_memory)
+
+        self.query_proj = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.key_proj   = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.value_proj = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.out_proj   = nn.Linear(hidden_size, hidden_size, bias=False)
+
+        self.layernorm = nn.LayerNorm(hidden_size)
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        B, L, D = hidden_states.shape
+        # Expand memory for the batch
+        memory_expanded = self.domain_memory.unsqueeze(0).expand(B, self.memory_slots, D)
+
+        Q = self.query_proj(hidden_states)
+        K = self.key_proj(memory_expanded)
+        V = self.value_proj(memory_expanded)
+
+        # reshape for multi-head
+        Q = Q.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)   # (B, heads, L, head_dim)
+        K = K.view(B, self.memory_slots, self.num_heads, self.head_dim).transpose(1, 2)
+        V = V.view(B, self.memory_slots, self.num_heads, self.head_dim).transpose(1, 2)
+
+        scores = torch.matmul(Q, K.transpose(-1, -2)) / (self.head_dim ** 0.5)
+        attn_weights = torch.softmax(scores, dim=-1)  # (B, heads, L, memory_slots)
+
+        context = torch.matmul(attn_weights, V)       # (B, heads, L, head_dim)
+        context = context.transpose(1, 2).contiguous().view(B, L, D)
+
+        # LN + residual
+        context = self.out_proj(context)
+        residual = hidden_states
+        out = self.layernorm(residual + context)
+        return out
+
+
+class CrossAttention(nn.Module):
+    """
+    Standard multi-head cross-attention:
+      - Q from hidden_states
+      - K, V from extra_hidden_states
+    """
+    def __init__(self, hidden_size: int, num_heads: int):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.head_dim = hidden_size // num_heads
         
-        # Scale factor for each head = 1 / sqrt(head_dim)
-        self.scale_factor = self.head_dim ** -0.5
 
-    def _split_heads(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Splits the last dimension (kg_embedding_dim) into (num_heads, head_dim),
-        then rearranges to (B, num_heads, L, head_dim).
-        """
-        B, L, D = x.size()  # D should be kg_embedding_dim
-        x = x.view(B, L, self.num_heads, self.head_dim)
-        return x.permute(0, 2, 1, 3)  # (B, num_heads, L, head_dim)
+        self.query_proj = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.key_proj   = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.value_proj = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.out_proj   = nn.Linear(hidden_size, hidden_size, bias=False)
 
-    def _merge_heads(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Merges (num_heads, head_dim) back into a single dimension (kg_embedding_dim).
-        x is of shape (B, num_heads, L, head_dim).
-        Returns shape (B, L, kg_embedding_dim).
-        """
-        B, nH, L, hD = x.size()
-        x = x.permute(0, 2, 1, 3).contiguous()  # (B, L, num_heads, head_dim)
-        return x.view(B, L, nH * hD)  # (B, L, kg_embedding_dim)
+        self.layernorm = nn.LayerNorm(hidden_size)
 
     def forward(
         self,
-        hidden_states: torch.Tensor,          # (B, L, hidden_size)
-        fiveg_feature_indices: torch.Tensor,  # (B, L) indices for domain features
-        attention_mask: Optional[torch.Tensor] = None,
-        head_mask: Optional[torch.Tensor] = None,
-        output_attentions: bool = False
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """
-        Args:
-            hidden_states: (B, L, hidden_size)
-            fiveg_feature_indices: (B, L) 5G feature IDs, which will be embedded to (B, L, kg_embedding_dim)
-            attention_mask: optional, shape (B, L) or (B, 1, L, L) if broadcasting
-            head_mask: optional, for masking certain heads (rarely used)
-            output_attentions: if True, return attention_probs
-            
-        Returns:
-            fiveg_aware_output: (B, L, hidden_size)
-            optionally, attention_probs: (B, num_heads, L, L) if output_attentions=True
-        """
-        B, L = fiveg_feature_indices.size()
+        hidden_states: torch.Tensor,
+        extra_hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        # hidden_states (main) => Q
+        # extra_hidden_states   => K, V
+        B, L_main, D = hidden_states.size()
+        L_extra = extra_hidden_states.size(1)
 
-        # 1) Embed the fiveg feature indices to (B, L, kg_embedding_dim)
-        fiveg_embeddings = self.fiveg_embedding(fiveg_feature_indices)
+        Q = self.query_proj(hidden_states)
+        K = self.key_proj(extra_hidden_states)
+        V = self.value_proj(extra_hidden_states)
 
-        # 2) Project hidden_states => Q of shape (B, L, kg_embedding_dim)
-        Q = self.W_q(hidden_states)
-        #    Project fiveg_embeddings => K, V of shape (B, L, kg_embedding_dim)
-        K = self.W_k(fiveg_embeddings)
-        V = self.W_v(fiveg_embeddings)
+        Q = Q.view(B, L_main, self.num_heads, self.head_dim).transpose(1, 2)  # (B, heads, L_main, head_dim)
+        K = K.view(B, L_extra, self.num_heads, self.head_dim).transpose(1, 2)
+        V = V.view(B, L_extra, self.num_heads, self.head_dim).transpose(1, 2)
 
-        # 3) Reshape Q, K, V into multi-head format
-        #    => (B, num_heads, L, head_dim)
-        Q = self._split_heads(Q)
-        K = self._split_heads(K)
-        V = self._split_heads(V)
-
-        # 4) Compute scaled dot-product attention
-        #    attention_scores = Q x K^T
-        #    Q, K => (B, num_heads, L, head_dim) => (B, num_heads, L, L) after matmul
-        attention_scores = torch.matmul(Q, K.transpose(-1, -2))
-        attention_scores *= self.scale_factor  # scale
-
-        # 5) Apply attention mask if given: typically (B, 1, 1, L) or (B, 1, L, L).
+        scores = torch.matmul(Q, K.transpose(-1, -2)) / (self.head_dim ** 0.5)
         if attention_mask is not None:
-            # If mask is (B, L), we might need to reshape to (B, 1, 1, L) or (B, 1, L, L) 
-            # so it broadcasts properly.
-            # We'll assume user has provided a shape that can broadcast to (B, num_heads, L, L).
-            attention_scores = attention_scores.masked_fill(attention_mask == 0, float("-inf"))
+            # adapt shape or broadcast if needed
+            scores = scores + attention_mask
+        attn_weights = torch.softmax(scores, dim=-1)
+        context = torch.matmul(attn_weights, V)  # (B, heads, L_main, head_dim)
+        context = context.transpose(1, 2).contiguous().view(B, L_main, D)
 
-        # 6) Softmax over the last dim => (B, num_heads, L, L)
-        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-
-        # 7) Dropout on attention probabilities
-        attention_probs = self.attn_dropout(attention_probs)
-
-        # 8) Weighted sum of V => (B, num_heads, L, head_dim)
-        context = torch.matmul(attention_probs, V)
-
-        # 9) Merge heads back to (B, L, kg_embedding_dim)
-        context = self._merge_heads(context)
-
-        # 10) Final linear projection: (B, L, hidden_size)
-        fiveg_aware_output = self.W_o(context)
-
-        # 11) Return attention
-        if output_attentions:
-            return fiveg_aware_output, attention_probs
-        else:
-            return fiveg_aware_output, None
+        out = self.out_proj(context)
+        # LN + residual
+        out = self.layernorm(hidden_states + out)
+        return out
 
 
-# Define Modified LlamaDecoderLayer with Two Fiveg Knowledge Injection Layers
+# -------------------------------------------------------------------------
+# 2. 5G Decoder Layer
+#    We'll incorporate:
+#      - Base Self-Attn + MLP (from LLaMA)
+#      - DomainAdapter
+#      - CodeAdapter
+#      - KnowledgeConditionedAttention (KCA)
+#      - Separate cross-attn for logs, config
+# -------------------------------------------------------------------------
 class FivegLlamaDecoderLayer(LlamaDecoderLayer):
-    def __init__(self, config: LlamaConfig, layer_idx: int):
-        super().__init__(config, layer_idx) # Initialize the original LlamaDecoderLayer
-        self.spec_fiveg_knowledge_layer = FivegEmbeddingMultiHeadAttentionLayer(config=config, num_fiveg_features=config.num_spec_features, kg_embedding_dim=config.spec_kg_embedding_dim, num_fiveg_heads=config.spec_num_fiveg_heads)
-        self.code_fiveg_knowledge_layer = FivegEmbeddingMultiHeadAttentionLayer(config=config,  num_fiveg_features=config.num_code_features, kg_embedding_dim=config.code_kg_embedding_dim, num_fiveg_heads=config.code_num_fiveg_heads)
-        self.post_spec_fiveg_knowledge_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_code_fiveg_knowledge_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+    """
+    An extension of the LlamaDecoderLayer that includes:
+      1) DomainAdapter
+      2) CodeAdapter
+      3) KnowledgeConditionedAttention
+      4) Three separate CrossAttention blocks for logs, config, code
+    The forward pass is structured in a sequential manner:
+      - standard self-attn + MLP
+      - domain adapter
+      - code adapter
+      - knowledge-conditioned attention
+      - cross-attn to logs (if provided)
+      - cross-attn to config (if provided)
+    """
+
+    def __init__(self, config: LlamaConfig, layer_idx: int,
+                 adapter_dim: int = 64,
+                 memory_slots: int = 32,
+                 kca_heads: int = 4):
+        super().__init__(config, layer_idx)
+
+        # Domain + Code Adapters
+        self.domain_adapter = DomainAdapter(hidden_size=config.hidden_size, adapter_size=adapter_dim)
+        self.code_adapter   = CodeAdapter(hidden_size=config.hidden_size,   adapter_size=adapter_dim)
+
+        # KnowledgeConditionedAttention
+        self.kca = KnowledgeConditionedAttention(
+            hidden_size=config.hidden_size,
+            memory_slots=memory_slots,
+            num_heads=kca_heads
+        )
+
+        # Cross-Attention for logs / config / code
+        self.num_heads = config.num_attention_heads
+        self.logs_cross_attn   = CrossAttention(hidden_size=config.hidden_size, num_heads=self.num_heads)
+        self.config_cross_attn = CrossAttention(hidden_size=config.hidden_size, num_heads=self.num_heads)
 
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_value: Optional["Cache"] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-        spec_fiveg_feature_indices: Optional[torch.LongTensor] = None, # Add spec_fiveg_feature_indices as input
-        code_fiveg_feature_indices: Optional[torch.LongTensor] = None, # Add code_fiveg_feature_indices as input
-        **kwargs: Unpack[FlashAttentionKwargs],
+        # Additional embeddings for logs, config, code
+        logs_hidden_states: Optional[torch.Tensor] = None,
+        config_hidden_states: Optional[torch.Tensor] = None,
+        **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
-        residual = hidden_states
 
+        # 1) LLaMA self-attn + MLP
+        residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
 
-        # Self Attention
         hidden_states, self_attn_weights = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
@@ -237,32 +316,27 @@ class FivegLlamaDecoderLayer(LlamaDecoderLayer):
         )
         hidden_states = residual + hidden_states
 
-        # Fully Connected
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
 
-        # Spec Fiveg Knowledge Injection - Inserted AFTER MLP
-        if spec_fiveg_feature_indices is not None: # Conditionally apply if spec fiveg features are provided
-            spec_fiveg_output, _ = self.spec_fiveg_knowledge_layer(
-                hidden_states=hidden_states,
-                fiveg_feature_indices=spec_fiveg_feature_indices, # Use spec_fiveg_feature_indices
-                attention_mask=attention_mask # You can pass the same attention mask if relevant
-            )
-            hidden_states = hidden_states + spec_fiveg_output # Residual connection
-            hidden_states = self.post_spec_fiveg_knowledge_layernorm(hidden_states) # Normalize again
+        # 2) Domain Adapter
+        hidden_states = self.domain_adapter(hidden_states)
 
-        # Code Fiveg Knowledge Injection - Inserted AFTER Spec Fiveg Layer
-        if code_fiveg_feature_indices is not None: # Conditionally apply if code fiveg features are provided
-            code_fiveg_output, _ = self.code_fiveg_knowledge_layer(
-                hidden_states=hidden_states,
-                fiveg_feature_indices=code_fiveg_feature_indices, # Use code_fiveg_feature_indices
-                attention_mask=attention_mask # You can pass the same attention mask if relevant
-            )
-            hidden_states = hidden_states + code_fiveg_output # Residual connection
-            hidden_states = self.post_code_fiveg_knowledge_layernorm(hidden_states) # Normalize again
+        # 3) Code Adapter
+        hidden_states = self.code_adapter(hidden_states)
 
+        # 4) Knowledge Conditioned Attention
+        hidden_states = self.kca(hidden_states)
+
+        # 5) Cross-attn: logs
+        if logs_hidden_states is not None:
+            hidden_states = self.logs_cross_attn(hidden_states, logs_hidden_states, attention_mask=None)
+
+        # 6) Cross-attn: config
+        if config_hidden_states is not None:
+            hidden_states = self.config_cross_attn(hidden_states, config_hidden_states, attention_mask=None)
 
         outputs = (hidden_states,)
         if output_attentions:
@@ -271,42 +345,66 @@ class FivegLlamaDecoderLayer(LlamaDecoderLayer):
         return outputs
 
 
-# Define Modified LlamaModel with ModifiedLlamaDecoderLayer
-class FivegLlamaModel(_LlamaModel): # Inherit from the original LlamaModel
-    def __init__(self, config):
+# -------------------------------------------------------------------------
+# 3. 5G Model that uses FivegLlamaDecoderLayer instead of LlamaDecoderLayer
+# -------------------------------------------------------------------------
+class FivegLlamaModel(LlamaPreTrainedModel):
+    """
+    Replaces the original LlamaDecoderLayer with FivegLlamaDecoderLayer.
+    This model can handle additional embeddings for logs, config, code,
+    plus has domain+code adapters and knowledge-conditioned attention.
+    """
+    def __init__(self, config: LlamaConfig,
+                 adapter_dim: int = 64,
+                 memory_slots: int = 32,
+                 kca_heads: int = 4):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        self.layers = nn.ModuleList(
-            [FivegLlamaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)] # Use ModifiedLlamaDecoderLayer here
-        )
+
+        # Build extended decoder layers
+        self.layers = nn.ModuleList([
+            FivegLlamaDecoderLayer(
+                config=config,
+                layer_idx=layer_idx,
+                adapter_dim=adapter_dim,
+                memory_slots=memory_slots,
+                kca_heads=kca_heads
+            ) for layer_idx in range(config.num_hidden_layers)
+        ])
+
         self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = LlamaRotaryEmbedding(config=config)
         self.gradient_checkpointing = False
 
-        # Initialize weights and apply final processing
         self.post_init()
 
-    # We are keeping the forward method of the original LlamaModel as it is compatible with ModifiedLlamaDecoderLayer
-    @add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
+    def get_input_embeddings(self):
+        return self.embed_tokens
+
+    def set_input_embeddings(self, value):
+        self.embed_tokens = value
+
     def forward(
         self,
-        input_ids: torch.LongTensor = None,
+        input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Cache] = None,
+        past_key_values: Optional["Cache"] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        spec_fiveg_feature_indices: Optional[torch.LongTensor] = None, # Add spec_fiveg_feature_indices to forward method
-        code_fiveg_feature_indices: Optional[torch.LongTensor] = None, # Add code_fiveg_feature_indices to forward method
-        **flash_attn_kwargs: Unpack[FlashAttentionKwargs],
-    ) -> Union[Tuple, BaseModelOutputWithPast]:
+        # new streams
+        logs_hidden_states: Optional[torch.Tensor] = None,
+        config_hidden_states: Optional[torch.Tensor] = None,
+        **flash_attn_kwargs,
+    ) -> BaseModelOutputWithPast:
+
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -318,9 +416,7 @@ class FivegLlamaModel(_LlamaModel): # Inherit from the original LlamaModel
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
         if self.gradient_checkpointing and self.training and use_cache:
-            logger.warning_once(
-                "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`."
-            )
+            logger.warning_once("`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`.")
             use_cache = False
 
         if inputs_embeds is None:
@@ -343,65 +439,50 @@ class FivegLlamaModel(_LlamaModel): # Inherit from the original LlamaModel
         )
 
         hidden_states = inputs_embeds
-
-        # create position embeddings to be shared across the decoder layers
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
-        # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
 
-        for decoder_layer in self.layers[: self.config.num_hidden_layers]:
+        for decoder_layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
-            if self.gradient_checkpointing and self.training:
-                layer_outputs = self._gradient_checkpointing_func(
-                    decoder_layer.__call__,
-                    hidden_states,
-                    causal_mask,
-                    position_ids,
-                    past_key_values,
-                    output_attentions,
-                    use_cache,
-                    cache_position,
-                    position_embeddings,
-                    spec_fiveg_feature_indices, # Pass spec_fiveg_feature_indices to decoder layer
-                    code_fiveg_feature_indices # Pass code_fiveg_feature_indices to decoder layer
-                )
-            else:
-                layer_outputs = decoder_layer(
-                    hidden_states,
-                    attention_mask=causal_mask,
-                    position_ids=position_ids,
-                    past_key_value=past_key_values,
-                    output_attentions=output_attentions,
-                    use_cache=use_cache,
-                    cache_position=cache_position,
-                    position_embeddings=position_embeddings,
-                    spec_fiveg_feature_indices=spec_fiveg_feature_indices, # Pass spec_fiveg_feature_indices to decoder layer
-                    code_fiveg_feature_indices=code_fiveg_feature_indices, # Pass code_fiveg_feature_indices to decoder layer
-                    **flash_attn_kwargs,
-                )
-
+            layer_outputs = decoder_layer(
+                hidden_states=hidden_states,
+                attention_mask=causal_mask,
+                position_ids=position_ids,
+                past_key_value=past_key_values,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+                cache_position=cache_position,
+                position_embeddings=position_embeddings,
+                logs_hidden_states=logs_hidden_states,
+                config_hidden_states=config_hidden_states,
+                **flash_attn_kwargs
+            )
             hidden_states = layer_outputs[0]
 
             if output_attentions:
-                all_self_attns += (layer_outputs[1],)
+                if len(layer_outputs) > 1:
+                    all_self_attns += (layer_outputs[1],)
+                else:
+                    all_self_attns += (None,)
 
         hidden_states = self.norm(hidden_states)
 
-        # add hidden states from the last decoder layer
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
-        output = BaseModelOutputWithPast(
+        if not return_dict:
+            return (hidden_states, past_key_values, all_hidden_states, all_self_attns)
+
+        return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
             hidden_states=all_hidden_states,
             attentions=all_self_attns,
         )
-        return output if return_dict else output.to_tuple()
 
     def _update_causal_mask(
         self,
@@ -416,6 +497,9 @@ class FivegLlamaModel(_LlamaModel): # Inherit from the original LlamaModel
                 return attention_mask
             return None
 
+        # For SDPA, when possible, we will rely on its `is_causal` argument instead of its `attn_mask` argument, in
+        # order to dispatch on Flash Attention 2. This feature is not compatible with static cache, as SDPA will fail
+        # to infer the attention mask.
         past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
         using_static_cache = isinstance(past_key_values, StaticCache)
 
@@ -454,14 +538,17 @@ class FivegLlamaModel(_LlamaModel): # Inherit from the original LlamaModel
         if (
             self.config._attn_implementation == "sdpa"
             and attention_mask is not None
-            and attention_mask.device.type in ["cuda", "xpu"]
+            and attention_mask.device.type == "cuda"
             and not output_attentions
         ):
+            # Attend to all tokens in fully masked rows in the causal_mask, for example the relevant first rows when
+            # using left padding. This is required by F.scaled_dot_product_attention memory-efficient attention path.
+            # Details: https://github.com/pytorch/pytorch/issues/110213
             min_dtype = torch.finfo(dtype).min
             causal_mask = AttentionMaskConverter._unmask_unattended(causal_mask, min_dtype)
 
         return causal_mask
-
+    
     @staticmethod
     def _prepare_4d_causal_attention_mask_with_cache_position(
         attention_mask: torch.Tensor,
@@ -488,9 +575,7 @@ class FivegLlamaModel(_LlamaModel): # Inherit from the original LlamaModel
             if attention_mask is not None:
                 causal_mask = causal_mask.clone()  # copy to contiguous memory for in-place edit
                 mask_length = attention_mask.shape[-1]
-                padding_mask = causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :].to(
-                    causal_mask.device
-                )
+                padding_mask = causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :]
                 padding_mask = padding_mask == 0
                 causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(
                     padding_mask, min_dtype
@@ -499,33 +584,54 @@ class FivegLlamaModel(_LlamaModel): # Inherit from the original LlamaModel
         return causal_mask
 
 
-class KwargsForCausalLM(FlashAttentionKwargs, LossKwargs): ...
-
-
-class FivegLlamaForCausalLM(_LlamaForCausalLM): # Inherit from the original LlamaForCausalLM
+# -------------------------------------------------------------------------
+# 4. 5G Causal LM: Similar to LlamaForCausalLM but uses FivegLlamaModel
+# -------------------------------------------------------------------------
+class FivegLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
     _tp_plan = {"lm_head": "colwise_rep"}
-    _pp_plan = {"lm_head": (["hidden_states"], ["logits"])}
 
-    def __init__(self, config):
+    def __init__(self,
+                 config: LlamaConfig,
+                 adapter_dim: int = 512,
+                 memory_slots: int = 128,
+                 kca_heads: int = 16):
         super().__init__(config)
-        self.model = FivegLlamaModel(config) # Use ModifiedLlamaModel here
+        self.model = FivegLlamaModel(
+            config,
+            adapter_dim=adapter_dim,
+            memory_slots=memory_slots,
+            kca_heads=kca_heads
+        )
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
-        # Initialize weights and apply final processing
         self.post_init()
 
-    # Modify the forward method to accept and pass fiveg_feature_indices
-    # @deprecate_kwarg("num_logits_to_keep", version="4.50", new_name="logits_to_keep")
-    # @add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
-    # @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
+    def get_input_embeddings(self):
+        return self.model.embed_tokens
+
+    def set_input_embeddings(self, value):
+        self.model.embed_tokens = value
+
+    def get_output_embeddings(self):
+        return self.lm_head
+
+    def set_output_embeddings(self, new_embeddings):
+        self.lm_head = new_embeddings
+
+    def set_decoder(self, decoder):
+        self.model = decoder
+
+    def get_decoder(self):
+        return self.model
+
     def forward(
         self,
-        input_ids: torch.LongTensor = None,
+        input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
+        past_key_values: Optional[Union["Cache", Tuple[torch.FloatTensor]]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
@@ -533,11 +639,13 @@ class FivegLlamaForCausalLM(_LlamaForCausalLM): # Inherit from the original Llam
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        logits_to_keep: Union[int, torch.Tensor] = 0,
-        spec_fiveg_feature_indices: Optional[torch.LongTensor] = None, # Add spec_fiveg_feature_indices to forward method
-        code_fiveg_feature_indices: Optional[torch.LongTensor] = None, # Add code_fiveg_feature_indices to forward method
-        **kwargs: Unpack[KwargsForCausalLM],
+        num_logits_to_keep: int = 0,
+        # Additional streams:
+        logs_hidden_states: Optional[torch.Tensor] = None,
+        config_hidden_states: Optional[torch.Tensor] = None,
+        **kwargs,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
+        
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -555,17 +663,18 @@ class FivegLlamaForCausalLM(_LlamaForCausalLM): # Inherit from the original Llam
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             cache_position=cache_position,
-            spec_fiveg_feature_indices=spec_fiveg_feature_indices, # Pass spec_fiveg_feature_indices to the model
-            code_fiveg_feature_indices=code_fiveg_feature_indices, # Pass code_fiveg_feature_indices to the model
+            logs_hidden_states=logs_hidden_states,
+            config_hidden_states=config_hidden_states,
             **kwargs,
         )
 
         hidden_states = outputs[0]
-        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
-        logits = self.lm_head(hidden_states[:, slice_indices, :])
+        logits = self.lm_head(hidden_states[:, -num_logits_to_keep:, :])
 
         loss = None
         if labels is not None:
+            # If needed, ensure shape alignment if num_logits_to_keep != 0
+            # standard cross-entropy
             loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs)
 
         if not return_dict:
@@ -579,328 +688,3 @@ class FivegLlamaForCausalLM(_LlamaForCausalLM): # Inherit from the original Llam
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-
-@dataclass
-class FivegDataCollatorForLanguageModeling(DataCollatorForLanguageModeling):
-
-    tokenizer: PreTrainedTokenizerBase
-    mlm: bool = True
-    mlm_probability: float = 0.15
-    pad_to_multiple_of: Optional[int] = None
-    tf_experimental_compile: bool = False
-    return_tensors: str = "pt"
-    mask_replace_prob: float = 0.8
-    random_replace_prob: float = 0.1
-    spec_feature_vocab_size: Optional[int] = None # Add spec_feature_vocab_size
-    code_feature_vocab_size: Optional[int] = None # Add code_feature_vocab_size
-    spec_feature_embedding_dim: int = 64 # Add dimension for spec features
-    code_feature_embedding_dim: int = 64 # Add dimension for code features
-
-    def __post_init__(self):
-        if self.mlm and self.tokenizer.mask_token is None:
-            raise ValueError(
-                "This tokenizer does not have a mask token which is necessary for masked language modeling. "
-                "You should pass `mlm=False` to train on causal language modeling instead."
-            )
-        if self.mlm_probability < 0 or self.mlm_probability > 1:
-            raise ValueError("mlm_probability should be between 0 and 1.")
-        if self.mask_replace_prob + self.random_replace_prob > 1:
-            raise ValueError("The sum of mask_replace_prob and random_replace_prob should not exceed 1")
-        if self.mask_replace_prob < 0 or self.mask_replace_prob > 1:
-            raise ValueError("mask_replace_prob should be between 0 and 1.")
-        if self.random_replace_prob < 0 or self.random_replace_prob > 1:
-            raise ValueError("random_replace_prob should be between 0 and 1.")
-        if self.spec_feature_vocab_size <= 0 and self.spec_feature_embedding_dim <= 0:
-            raise ValueError("spec_feature_vocab_size and spec_feature_embedding_dim should be greater than 0")
-        if self.code_feature_vocab_size <= 0 and self.code_feature_embedding_dim <= 0:
-            raise ValueError("code_feature_vocab_size and code_feature_embedding_dim should be greater than 0")
-        
-        if self.tf_experimental_compile:
-            import tensorflow as tf
-
-            self.tf_mask_tokens = tf.function(self.tf_mask_tokens, jit_compile=True)
-
-    @staticmethod
-    def tf_bernoulli(shape, probability):
-        import tensorflow as tf
-
-        prob_matrix = tf.fill(shape, probability)
-        return tf.cast(prob_matrix - tf.random.uniform(shape, 0, 1) >= 0, tf.bool)
-
-    def tf_mask_tokens(
-        self, inputs: Any, vocab_size, mask_token_id, special_tokens_mask: Optional[Any] = None
-    ) -> Tuple[Any, Any]:
-        """
-        Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original.
-        """
-        import tensorflow as tf
-
-        mask_token_id = tf.cast(mask_token_id, inputs.dtype)
-
-        input_shape = tf.shape(inputs)
-        masked_indices = self.tf_bernoulli(input_shape, self.mlm_probability) & ~special_tokens_mask
-        # Replace unmasked indices with -100 in the labels since we only compute loss on masked tokens
-        labels = tf.where(masked_indices, inputs, -100)
-
-        # mask_replace_prob% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
-        indices_replaced = self.tf_bernoulli(input_shape, self.mask_replace_prob) & masked_indices
-
-        inputs = tf.where(indices_replaced, mask_token_id, inputs)
-
-        if self.mask_replace_prob == 1 or self.random_replace_prob == 0:
-            return inputs, labels
-
-        remaining_prob = 1 - self.mask_replace_prob
-        random_replace_prob_scaled = self.random_replace_prob / remaining_prob
-        # random_replace_prob% of the time, we replace masked input tokens with random word
-        indices_random = (
-            self.tf_bernoulli(input_shape, random_replace_prob_scaled) & masked_indices & ~indices_replaced
-        )
-        random_words = tf.random.uniform(input_shape, maxval=vocab_size, dtype=inputs.dtype)
-
-        inputs = tf.where(indices_random, random_words, inputs)
-
-        # The rest of the time ((1-random_replace_prob-mask_replace_prob)% of the time) we keep the masked input tokens unchanged
-        return inputs, labels
-
-    def tf_call(self, examples: List[Union[List[int], Any, Dict[str, Any]]]) -> Dict[str, Any]:
-        import tensorflow as tf
-
-        # Handle dict or lists with proper padding and conversion to tensor.
-        if isinstance(examples[0], Mapping):
-            batch = pad_without_fast_tokenizer_warning(
-                self.tokenizer, examples, return_tensors="tf", pad_to_multiple_of=self.pad_to_multiple_of
-            )
-        else:
-            batch = {
-                "input_ids": _tf_collate_batch(examples, self.tokenizer, pad_to_multiple_of=self.pad_to_multiple_of)
-            }
-
-        # spec Feature Indices Processing (same as before)
-        spec_feature_indices_batch = [example.get("spec_feature_indices", tf.constant([0] * self.spec_feature_vocab_size, dtype=tf.int64)) for example in examples] # Ensure default padding for missing features
-        max_spec_feature_len = max(len(indices) for indices in spec_feature_indices_batch) if spec_feature_indices_batch else 0
-        padded_spec_feature_indices_batch = []
-        for indices in spec_feature_indices_batch:
-            padding_length = max_spec_feature_len - len(indices)
-            padded_indices = tf.concat([indices, tf.zeros(padding_length, dtype=tf.int64)], axis=0)
-            padded_spec_feature_indices_batch.append(padded_indices)
-        batch["spec_feature_indices"] = tf.stack(padded_spec_feature_indices_batch) if padded_spec_feature_indices_batch else tf.constant([], dtype=tf.int64)
-
-
-        # Code Feature Indices Processing (NEW)
-        code_feature_indices_batch = [example.get("code_feature_indices", tf.constant([-1] * self.code_feature_vocab_size, dtype=tf.int64)) for example in examples] # Ensure default padding for missing features
-        max_code_feature_len = max(len(indices) for indices in code_feature_indices_batch) if code_feature_indices_batch else 0
-        padded_code_feature_indices_batch = []
-        for indices in code_feature_indices_batch:
-            padding_length = max_code_feature_len - len(indices)
-            padded_indices = tf.concat([indices, tf.zeros(padding_length, dtype=tf.int64)], axis=0) # Pad with 0
-            padded_code_feature_indices_batch.append(padded_indices)
-        batch["code_feature_indices"] = tf.stack(padded_code_feature_indices_batch) if padded_code_feature_indices_batch else tf.constant([], dtype=tf.int64)
-
-
-        # Masking (same as before)
-        special_tokens_mask = batch.pop("special_tokens_mask", None)
-        if self.mlm:
-            if special_tokens_mask is None:
-                special_tokens_mask = [
-                    self.tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True)
-                    for val in batch["input_ids"].numpy().tolist()
-                ]
-                special_tokens_mask = tf.cast(tf.convert_to_tensor(special_tokens_mask, dtype=tf.int64), tf.bool)
-            else:
-                special_tokens_mask = tf.cast(special_tokens_mask, tf.bool)
-            batch["input_ids"], batch["labels"] = self.tf_mask_tokens(
-                tf.cast(batch["input_ids"], tf.int64),
-                special_tokens_mask=special_tokens_mask,
-                mask_token_id=self.tokenizer.mask_token_id,
-                vocab_size=len(self.tokenizer),
-            )
-        else:
-            labels = batch["input_ids"]
-            if self.tokenizer.pad_token_id is not None:
-                labels = tf.where(labels == self.tokenizer.pad_token_id, -100, labels)
-            else:
-                labels = tf.identity(labels)
-            batch["labels"] = labels
-        return batch
-
-    def torch_call(self, examples: List[Union[List[int], Any, Dict[str, Any]]]) -> Dict[str, Any]:
-        # Handle dict or lists with proper padding and conversion to tensor.
-        if isinstance(examples[0], Mapping):
-            batch = pad_without_fast_tokenizer_warning(
-                self.tokenizer, examples, return_tensors="pt", pad_to_multiple_of=self.pad_to_multiple_of
-            )
-        else:
-            batch = {
-                "input_ids": _torch_collate_batch(examples, self.tokenizer, pad_to_multiple_of=self.pad_to_multiple_of)
-            }
-
-        # spec Feature Indices Processing (same as before)
-        spec_feature_indices_batch = [example.get("spec_feature_indices", torch.tensor([0] * self.spec_feature_vocab_size, dtype=torch.long)) for example in examples] # Ensure default padding for missing features
-        max_spec_feature_len = max(len(indices) for indices in spec_feature_indices_batch) if spec_feature_indices_batch else 0
-        padded_spec_feature_indices_batch = []
-        for indices in spec_feature_indices_batch:
-            padding_length = max_spec_feature_len - len(indices)
-            padded_indices = torch.cat([indices, torch.zeros(padding_length, dtype=torch.long)], dim=0)
-            padded_spec_feature_indices_batch.append(padded_indices)
-        batch["spec_feature_indices"] = torch.stack(padded_spec_feature_indices_batch) if padded_spec_feature_indices_batch else torch.tensor([], dtype=torch.long)
-
-
-        # Code Feature Indices Processing (NEW)
-        code_feature_indices_batch = [example.get("code_feature_indices", torch.tensor([-1] * self.code_feature_vocab_size, dtype=torch.long)) for example in examples] # Ensure default padding for missing features
-        max_code_feature_len = max(len(indices) for indices in code_feature_indices_batch) if code_feature_indices_batch else 0
-        padded_code_feature_indices_batch = []
-        for indices in code_feature_indices_batch:
-            padding_length = max_code_feature_len - len(indices)
-            padded_indices = torch.cat([indices, torch.zeros(padding_length, dtype=torch.long)], dim=0) # Pad with 0
-            padded_code_feature_indices_batch.append(padded_indices)
-        batch["code_feature_indices"] = torch.stack(padded_code_feature_indices_batch) if padded_code_feature_indices_batch else torch.tensor([], dtype=torch.long)
-
-
-        # Masking (same as before)
-        special_tokens_mask = batch.pop("special_tokens_mask", None)
-        if self.mlm:
-            batch["input_ids"], batch["labels"] = self.torch_mask_tokens(
-                batch["input_ids"], special_tokens_mask=special_tokens_mask
-            )
-        else:
-            labels = batch["input_ids"].clone()
-            if self.tokenizer.pad_token_id is not None:
-                labels[labels == self.tokenizer.pad_token_id] = -100
-            batch["labels"] = labels
-        return batch
-
-    def torch_mask_tokens(self, inputs: Any, special_tokens_mask: Optional[Any] = None) -> Tuple[Any, Any]:
-        """
-        Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original.
-        """
-        import torch
-
-        labels = inputs.clone()
-        # We sample a few tokens in each sequence for MLM training (with probability `self.mlm_probability`)
-        probability_matrix = torch.full(labels.shape, self.mlm_probability)
-        if special_tokens_mask is None:
-            special_tokens_mask = [
-                self.tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in labels.tolist()
-            ]
-            special_tokens_mask = torch.tensor(special_tokens_mask, dtype=torch.bool)
-        else:
-            special_tokens_mask = special_tokens_mask.bool()
-
-        probability_matrix.masked_fill_(special_tokens_mask, value=0.0)
-        masked_indices = torch.bernoulli(probability_matrix).bool()
-        labels[~masked_indices] = -100  # We only compute loss on masked tokens
-
-        # mask_replace_prob% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
-        indices_replaced = torch.bernoulli(torch.full(labels.shape, self.mask_replace_prob)).bool() & masked_indices
-        inputs[indices_replaced] = self.tokenizer.convert_tokens_to_ids(self.tokenizer.mask_token)
-
-        if self.mask_replace_prob == 1 or self.random_replace_prob == 0:
-            return inputs, labels
-
-        remaining_prob = 1 - self.mask_replace_prob
-        random_replace_prob_scaled = self.random_replace_prob / remaining_prob
-
-        # random_replace_prob% of the time, we replace masked input tokens with random word
-        indices_random = (
-            torch.bernoulli(torch.full(labels.shape, random_replace_prob_scaled)).bool()
-            & masked_indices
-            & ~indices_replaced
-        )
-        random_words = torch.randint(len(self.tokenizer), labels.shape, dtype=torch.long)
-        inputs[indices_random] = random_words[indices_random]
-
-        # The rest of the time ((1-random_replace_prob-mask_replace_prob)% of the time) we keep the masked input tokens unchanged
-        return inputs, labels
-
-    def numpy_call(self, examples: List[Union[List[int], Any, Dict[str, Any]]]) -> Dict[str, Any]:
-        # Handle dict or lists with proper padding and conversion to tensor.
-        if isinstance(examples[0], Mapping):
-            batch = pad_without_fast_tokenizer_warning(
-                self.tokenizer, examples, return_tensors="np", pad_to_multiple_of=self.pad_to_multiple_of
-            )
-        else:
-            batch = {
-                "input_ids": _numpy_collate_batch(examples, self.tokenizer, pad_to_multiple_of=self.pad_to_multiple_of)
-            }
-
-        # spec Feature Indices Processing (same as before)
-        spec_feature_indices_batch = [example.get("spec_feature_indices", np.array([0] * self.spec_feature_vocab_size, dtype=np.int64)) for example in examples] # Ensure default padding for missing features
-        max_spec_feature_len = max(len(indices) for indices in spec_feature_indices_batch) if spec_feature_indices_batch else 0
-        padded_spec_feature_indices_batch = []
-        for indices in spec_feature_indices_batch:
-            padding_length = max_spec_feature_len - len(indices)
-            padded_indices = np.concatenate([indices, np.zeros(padding_length, dtype=np.int64)], axis=0)
-            padded_spec_feature_indices_batch.append(padded_indices)
-        batch["spec_feature_indices"] = np.stack(padded_spec_feature_indices_batch) if padded_spec_feature_indices_batch else np.array([], dtype=np.int64)
-
-
-        # Code Feature Indices Processing (NEW)
-        code_feature_indices_batch = [example.get("code_feature_indices", np.array([-1] * self.code_feature_vocab_size, dtype=np.int64)) for example in examples] # Ensure default padding for missing features
-        max_code_feature_len = max(len(indices) for indices in code_feature_indices_batch) if code_feature_indices_batch else 0
-        padded_code_feature_indices_batch = []
-        for indices in code_feature_indices_batch:
-            padding_length = max_code_feature_len - len(indices)
-            padded_indices = np.concatenate([indices, np.zeros(padding_length, dtype=np.int64)], axis=0) # Pad with 0
-            padded_code_feature_indices_batch.append(padded_indices)
-        batch["code_feature_indices"] = np.stack(padded_code_feature_indices_batch) if padded_code_feature_indices_batch else np.array([], dtype=np.int64)
-
-
-        # Masking (same as before)
-        special_tokens_mask = batch.pop("special_tokens_mask", None)
-        if self.mlm:
-            batch["input_ids"], batch["labels"] = self.numpy_mask_tokens(
-                batch["input_ids"], special_tokens_mask=special_tokens_mask
-            )
-        else:
-            labels = np.copy(batch["input_ids"])
-            if self.tokenizer.pad_token_id is not None:
-                labels[labels == self.tokenizer.pad_token_id] = -100
-            batch["labels"] = labels
-        return batch
-
-    def numpy_mask_tokens(self, inputs: Any, special_tokens_mask: Optional[Any] = None) -> Tuple[Any, Any]:
-        """
-        Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original.
-        """
-        labels = np.copy(inputs)
-        # We sample a few tokens in each sequence for MLM training (with probability `self.mlm_probability`)
-        probability_matrix = np.full(labels.shape, self.mlm_probability)
-        if special_tokens_mask is None:
-            special_tokens_mask = [
-                self.tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in labels.tolist()
-            ]
-            special_tokens_mask = np.array(special_tokens_mask, dtype=bool)
-        else:
-            special_tokens_mask = special_tokens_mask.astype(bool)
-
-        probability_matrix[special_tokens_mask] = 0
-        # Numpy doesn't have bernoulli, so we use a binomial with 1 trial
-        masked_indices = np.random.binomial(1, probability_matrix, size=probability_matrix.shape).astype(bool)
-        labels[~masked_indices] = -100  # We only compute loss on masked tokens
-
-        # mask_replace_prob% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
-        indices_replaced = (
-            np.random.binomial(1, self.mask_replace_prob, size=labels.shape).astype(bool) & masked_indices
-        )
-        inputs[indices_replaced] = self.tokenizer.mask_token_id
-
-        if self.mask_replace_prob == 1 or self.random_replace_prob == 0:
-            return inputs, labels
-
-        remaining_prob = 1 - self.mask_replace_prob
-        random_replace_prob_scaled = self.random_replace_prob / remaining_prob
-        indices_random = (
-            np.random.binomial(1, random_replace_prob_scaled, size=labels.shape).astype(bool)
-            & masked_indices
-            & ~indices_replaced
-        )
-        random_words = np.random.randint(
-            low=0, high=len(self.tokenizer), size=np.count_nonzero(indices_random), dtype=np.int64
-        )
-        inputs[indices_random] = random_words
-
-        # The rest of the time (10% of the time) we keep the masked input tokens unchanged
-        return inputs, labels
-
-
