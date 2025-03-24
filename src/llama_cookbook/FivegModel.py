@@ -105,6 +105,7 @@ class DomainAdapter(nn.Module):
         #   attn wants (B, L, E) => Q, K, V are all x
         #   returns (B, L, E), _
         attn_out, _ = self.attn(x, x, x, need_weights=False)
+        attn_out = attn_out.clone()
         print("After attn_out:", attn_out.shape)
         
         # Step 4) Up project back to hidden_size
@@ -134,6 +135,7 @@ class CodeAdapter(nn.Module):
         x = self.layernorm(hidden_states)
         x = self.down_proj(x)
         attn_out, _ = self.attn(x, x, x, need_weights=False)
+        attn_out = attn_out.clone()
         x = self.up_proj(attn_out)
         return residual + x
 
