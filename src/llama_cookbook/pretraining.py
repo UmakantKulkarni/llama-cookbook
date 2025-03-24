@@ -65,7 +65,7 @@ from transformers.models.mllama.modeling_mllama import (
     MllamaVisionEncoderLayer,
 )
 from llama_cookbook.model_checkpointing import load_model_checkpoint, load_optimizer_checkpoint
-from llama_cookbook.FivegModel import FivegLlamaForCausalLM, FivegLlamaDecoderLayer
+from llama_cookbook.FivegModel import FivegLlamaForCausalLM, FivegLlamaDecoderLayer, DomainAdapter, CodeAdapter, KnowledgeConditionedAttention, CrossAttention
 
 def setup_wandb(train_config, fsdp_config, **kwargs):
     try:
@@ -288,7 +288,7 @@ def main(**kwargs):
         else:
             # Create the FSDP wrapper for LlamaDecoderLayer in text models
             if train_config.is_fiveg_model:
-                my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, [FivegLlamaDecoderLayer])
+                my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, [FivegLlamaDecoderLayer, DomainAdapter, CodeAdapter, KnowledgeConditionedAttention, CrossAttention])
             else:
                 my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, [LlamaDecoderLayer])
         device_id = 0
@@ -333,7 +333,7 @@ def main(**kwargs):
         )
         if fsdp_config.fsdp_activation_checkpointing:
             model.enable_input_require_grads()
-            model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+            model.gradient_checkpointing_enable()
             apply_fsdp_checkpointing(model)
     elif not train_config.quantization and not train_config.enable_fsdp:
         if is_xpu_available():

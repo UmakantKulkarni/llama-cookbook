@@ -9,13 +9,14 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     apply_activation_checkpointing,
 )
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer
+from llama_cookbook.FivegModel import FivegLlamaDecoderLayer, DomainAdapter, CodeAdapter, KnowledgeConditionedAttention, CrossAttention
 
 non_reentrant_wrapper = partial(
     checkpoint_wrapper,
     checkpoint_impl=CheckpointImpl.NO_REENTRANT,
 )
 
-check_fn = lambda submodule: isinstance(submodule, LlamaDecoderLayer)
+check_fn = lambda submodule: isinstance(submodule, (LlamaDecoderLayer, FivegLlamaDecoderLayer, DomainAdapter, CodeAdapter, KnowledgeConditionedAttention, CrossAttention))
 
 
 def apply_fsdp_checkpointing(model):
