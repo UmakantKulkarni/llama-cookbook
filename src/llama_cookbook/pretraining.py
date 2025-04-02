@@ -288,7 +288,7 @@ def main(**kwargs):
         else:
             # Create the FSDP wrapper for LlamaDecoderLayer in text models
             if train_config.is_fiveg_model:
-                my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, [FivegLlamaDecoderLayer, DomainAdapter, CodeAdapter, KnowledgeConditionedAttention, CrossAttention])
+                my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, [FivegLlamaDecoderLayer])
             else:
                 my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, [LlamaDecoderLayer])
         device_id = 0
