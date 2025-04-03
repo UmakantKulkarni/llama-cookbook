@@ -38,7 +38,7 @@ class train_config:
     output_dir: str = "/proj/sfcs-PG0/fiveg_llm/models/cp_output"
     freeze_layers: bool = True
     num_freeze_layers: int = 1
-    freeze_LLM_only: bool = True # Freeze self-attention layers in the language_model. Vision model, multi_modal_projector, cross-attention will be fine-tuned
+    freeze_LLM_only: bool = False # Freeze self-attention layers in the language_model. Vision model, multi_modal_projector, cross-attention will be fine-tuned
     quantization: str = None
     one_gpu: bool = False
     save_model: bool = True
