@@ -287,10 +287,17 @@ def main(**kwargs):
             )
         else:
             # Create the FSDP wrapper for LlamaDecoderLayer in text models
-            if train_config.is_fiveg_model:
-                my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, [FivegLlamaDecoderLayer])
-            else:
-                my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, [LlamaDecoderLayer])
+            # if train_config.is_fiveg_model:
+            #     my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, [FivegLlamaDecoderLayer])
+            # else:
+            #     my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, [LlamaDecoderLayer])
+
+            transformer_layer_cls_for_block_wrapping = (
+                set() if train_config.is_fiveg_model else {LlamaDecoderLayer}
+            )
+            print(f"Applying FSDP wrap policy targeting block wrapping for: {transformer_layer_cls_for_block_wrapping}")
+            my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, transformer_layer_cls_for_block_wrapping)
+
         device_id = 0
         if is_xpu_available():
             device_id = torch.xpu.current_device()
