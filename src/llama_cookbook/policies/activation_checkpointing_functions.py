@@ -8,7 +8,7 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     CheckpointImpl,
     apply_activation_checkpointing,
 )
-from transformers.models.llama.modeling_llama import LlamaDecoderLayer
+from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaAttention, LlamaMLP
 from llama_cookbook.FivegModel import FivegLlamaDecoderLayer, DomainAdapter, CodeAdapter, KnowledgeConditionedAttention, CrossAttention
 
 non_reentrant_wrapper = partial(
@@ -16,7 +16,10 @@ non_reentrant_wrapper = partial(
     checkpoint_impl=CheckpointImpl.NO_REENTRANT,
 )
 
-check_fn = lambda submodule: isinstance(submodule, LlamaDecoderLayer)
+checkpointable_classes = {LlamaAttention, LlamaMLP,}
+excluded_classes = {DomainAdapter, CodeAdapter, KnowledgeConditionedAttention, CrossAttention, FivegLlamaDecoderLayer,}
+
+check_fn = lambda submodule: type(submodule) in checkpointable_classes and type(submodule) not in excluded_classes
 
 
 def apply_fsdp_checkpointing(model):
