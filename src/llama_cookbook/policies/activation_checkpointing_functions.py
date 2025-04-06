@@ -16,11 +16,10 @@ non_reentrant_wrapper = partial(
     checkpoint_impl=CheckpointImpl.NO_REENTRANT,
 )
 
-checkpointable_classes = {LlamaAttention, LlamaMLP,}
-excluded_classes = {DomainAdapter, CodeAdapter, KnowledgeConditionedAttention, CrossAttention, FivegLlamaDecoderLayer,}
+checkpointable_classes = {LlamaAttention, LlamaMLP, FivegLlamaDecoderLayer, LlamaDecoderLayer}
+excluded_classes = {DomainAdapter, CodeAdapter, KnowledgeConditionedAttention, CrossAttention,}
 
-#check_fn = lambda submodule: type(submodule) in checkpointable_classes and type(submodule) not in excluded_classes
-check_fn = lambda submodule: False
+check_fn = lambda submodule: type(submodule) in checkpointable_classes and type(submodule) not in excluded_classes
 
 def apply_fsdp_checkpointing(model):
     """apply activation checkpointing to model
