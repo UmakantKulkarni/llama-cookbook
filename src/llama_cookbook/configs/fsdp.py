@@ -16,7 +16,7 @@ class fsdp_config:
     replica_group_size: int=0 #requires hsdp to be set. This specifies the replica group size, which is world_size/sharding_group_size.
     checkpoint_type: StateDictType = StateDictType.FULL_STATE_DICT  # alternatively FULL_STATE_DICT can be used. SHARDED_STATE_DICT saves one file with sharded weights per rank while FULL_STATE_DICT will collect all weights on rank 0 and save them in a single file.
     fsdp_activation_checkpointing: bool=True
-    fsdp_cpu_offload: bool=True
+    fsdp_cpu_offload: bool=False
     pure_bf16: bool = False  # disables mixed precision, and runs in pure bfloat16
     optimizer: str= "AdamW"
     
