@@ -146,10 +146,10 @@ def split_cpt_data(combined_data, split, test_size_percent=0.2):
 
     if split == "train":
         #return combined_data[:train_size]
-        return combined_data[0:20]
+        return combined_data[40:60]
     elif split == "test":
         #return combined_data[train_size:]
-        return combined_data[20:40]
+        return combined_data[60:80]
     else:
         raise ValueError(f"Invalid split: {split} (must be 'train' or 'test').")
 
