@@ -88,6 +88,7 @@ def setup_wandb(train_config, fsdp_config, **kwargs):
 
 def main(**kwargs):
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
     # Update the configuration for the training and sharding process
     train_config, fsdp_config = TRAIN_CONFIG(), FSDP_CONFIG()
     update_config((train_config, fsdp_config), **kwargs)
