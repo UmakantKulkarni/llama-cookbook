@@ -287,16 +287,10 @@ def main(**kwargs):
             )
         else:
             # Create the FSDP wrapper for LlamaDecoderLayer in text models
-            # if train_config.is_fiveg_model:
-            #     my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, [FivegLlamaDecoderLayer])
-            # else:
-            #     my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, [LlamaDecoderLayer])
-
-            transformer_layer_cls_for_block_wrapping = (
-                set() if train_config.is_fiveg_model else {LlamaDecoderLayer}
-            )
-            print(f"Applying FSDP wrap policy targeting block wrapping for: {transformer_layer_cls_for_block_wrapping}")
-            my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, transformer_layer_cls_for_block_wrapping)
+            if train_config.is_fiveg_model:
+                my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, [FivegLlamaDecoderLayer])
+            else:
+                my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, [LlamaDecoderLayer])
 
         device_id = 0
         if is_xpu_available():
@@ -337,6 +331,7 @@ def main(**kwargs):
                 else None
             ),
             use_orig_params=use_orig_params,
+            ignored_modules=[model.model.layers[i].domain_adapter for i in range(len(model.model.layers))] if train_config.is_fiveg_model else None,
         )
         if fsdp_config.fsdp_activation_checkpointing:
             model.enable_input_require_grads()
