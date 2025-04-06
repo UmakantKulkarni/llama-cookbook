@@ -91,22 +91,18 @@ class DomainAdapter(nn.Module):
         self.up_proj = nn.Linear(adapter_size, hidden_size, bias=False)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        print("DomainAdapter input shape:", hidden_states.shape)
         # Step 1) LN + residual handle
         residual = hidden_states
         x = self.layernorm(hidden_states)   # shape: (B, L, hidden_size)
-        print("After LN:", x.shape)
-
+        
         # Step 2) Down project to smaller dimension
         x = self.down_proj(x)               # shape: (B, L, adapter_size)
-        print("After down_proj:", x.shape)
-
+        
         # Step 3) Multi-Head Self-Attention in adapter space
         #   attn wants (B, L, E) => Q, K, V are all x
         #   returns (B, L, E), _
         attn_out, _ = self.attn(x, x, x, need_weights=False)
         attn_out = attn_out.clone()
-        print("After attn_out:", attn_out.shape)
         
         # Step 4) Up project back to hidden_size
         x = self.up_proj(attn_out)
