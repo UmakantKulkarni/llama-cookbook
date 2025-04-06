@@ -159,8 +159,14 @@ def save_fsdp_model_checkpoint_full(
         # save model
         torch.save(cpu_state, save_full_path)
 
-        
         print(f"model checkpoint saved for epoch {epoch} at {save_full_path}\n")
+
+        try:
+            old_model_file = os.path.join(str(save_dir), "llama-" + str(epoch-1) + ".pt")
+            os.remove(old_model_file)
+            print(f"--> removed old model file {old_model_file} from disk")
+        except:
+            pass
       
 
 
@@ -238,6 +244,13 @@ def save_optimizer_checkpoint(model, optimizer, rank, cfg, epoch=1):
         torch.save(optim_state, opt_save_full_path)
 
         print(f"--> saved {opt_save_full_path} to disk")
+        
+        try:
+            old_optimizer_file = os.path.join(str(save_dir), "optimizer-" + str(epoch-1) + ".pt")
+            os.remove(old_optimizer_file)
+            print(f"--> removed old optimizer file {old_optimizer_file} from disk")
+        except:
+            pass
 
 
 def load_optimizer_checkpoint(model, optimizer, rank, cfg):
