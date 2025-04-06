@@ -99,6 +99,7 @@ def main(**kwargs):
     random.seed(train_config.seed)
     np.random.seed(train_config.seed)
 
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
     if train_config.enable_fsdp:
         setup()
         # torchrun specific
@@ -302,6 +303,19 @@ def main(**kwargs):
             use_orig_params = True
         else:
             use_orig_params = False
+
+        ignored_modules_list = None
+        if train_config.is_fiveg_model:
+            try:
+                # ADJUST PATH '.model.layers' IF YOUR MODEL STRUCTURE DIFFERS
+                ignored_modules_list = [
+                    layer.domain_adapter
+                    for layer in model.model.layers
+                    if hasattr(layer, 'domain_adapter') and isinstance(layer.domain_adapter, DomainAdapter)
+                ]
+                if not ignored_modules_list: print("Warning: Could not find DomainAdapter instances.")
+            except AttributeError as e: print(f"Warning: Structure error: {e}"); ignored_modules_list = None
+
         model = FSDP(
             model,
             auto_wrap_policy=(
@@ -331,12 +345,26 @@ def main(**kwargs):
                 else None
             ),
             use_orig_params=use_orig_params,
-            ignored_modules=[model.model.layers[i].domain_adapter for i in range(len(model.model.layers))] if train_config.is_fiveg_model else None,
+            ignored_modules=ignored_modules_list,
         )
         if fsdp_config.fsdp_activation_checkpointing:
             model.enable_input_require_grads()
             model.gradient_checkpointing_enable()
             apply_fsdp_checkpointing(model)
+
+        # Manually move ignored modules to the correct device AFTER FSDP init and Checkpointing
+        device = torch.device(f"cuda:{local_rank}") # Device for the current process
+
+        if ignored_modules_list:
+            print(f"Rank {local_rank}: Moving {len(ignored_modules_list)} ignored DomainAdapter modules to {device}...")
+            for module_instance in ignored_modules_list:
+                if isinstance(module_instance, torch.nn.Module):
+                    module_instance.to(device)
+                else:
+                    # This shouldn't happen if the list comprehension was correct
+                    print(f"Rank {local_rank}: Warning - Found non-module item in ignored_modules_list: {type(module_instance)}")
+            print(f"Rank {local_rank}: Finished moving ignored modules.")
+
     elif not train_config.quantization and not train_config.enable_fsdp:
         if is_xpu_available():
             model.to("xpu:0")
