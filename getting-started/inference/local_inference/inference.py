@@ -10,7 +10,7 @@ import fire
 import torch
 
 from accelerate.utils import is_xpu_available
-from llama_cookbook.inference.model_utils import load_model, load_peft_model
+from llama_cookbook.inference.model_utils import load_model, load_peft_model, load_fiveg_model
 
 from llama_cookbook.inference.safety_utils import AgentType, get_safety_checker
 from transformers import AutoTokenizer
@@ -18,6 +18,7 @@ from transformers import AutoTokenizer
 
 def main(
     model_name: str = "/proj/sfcs-PG0/fiveg_llm/models/hf_model",
+    is_fiveg_model: bool = True,
     peft_model: str = "", # "/opt/llama-cookbook/output",
     quantization: str = "4bit", # Options: 4bit, 8bit
     max_new_tokens=4096,  # The maximum numbers of tokens to generate
@@ -47,7 +48,12 @@ def main(
         torch.cuda.manual_seed(seed)
     torch.manual_seed(seed)
 
-    model = load_model(model_name, quantization, use_fast_kernels, **kwargs)
+    if is_fiveg_model:
+        print("Loading the 5G model...")
+        model = load_fiveg_model(model_name, quantization, use_fast_kernels, **kwargs)
+    else:
+        model = load_model(model_name, quantization, use_fast_kernels, **kwargs)
+    print("Model is loaded from HF checkpoints:\n", model)
     if peft_model:
         model = load_peft_model(model, peft_model)
 

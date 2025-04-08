@@ -2,7 +2,8 @@
 # This software may be used and distributed according to the terms of the GNU General Public License version 3.
 
 from warnings import warn
-
+import torch
+from torch.nn import MultiheadAttention 
 from llama_cookbook.configs import quantization_config as QUANT_CONFIG
 from llama_cookbook.utils.config_utils import update_config
 from peft import PeftModel
@@ -13,6 +14,7 @@ from transformers import (
     LlamaForCausalLM,
     MllamaConfig,
     MllamaForConditionalGeneration,
+    BitsAndBytesConfig,
 )
 from llama_cookbook.FivegModel import FivegLlamaForCausalLM
 
@@ -43,6 +45,38 @@ def load_model(model_name, quantization, use_fast_kernels, **kwargs):
         model_name,
         return_dict=True,
         **kwargs,
+    )
+    return model
+
+
+# Function to load the 5G model for text generation
+def load_fiveg_model(model_name, quantization, use_fast_kernels, **kwargs):
+    if type(quantization) == type(True):
+        warn(
+            "Quantization (--quantization) is a boolean, please specify quantization as '4bit' or '8bit'. Defaulting to '8bit' but this might change in the future.",
+            FutureWarning,
+        )
+        quantization = "8bit"
+
+    bnb_config = None
+    if quantization:
+        quant_config = QUANT_CONFIG()
+        update_config(quant_config, **kwargs)
+        bnb_config = quant_config.create_bnb_config(quantization)
+
+    print(f"use_fast_kernels = {use_fast_kernels}")
+
+    kwargs = {}
+    if bnb_config:
+        kwargs["quantization_config"] = bnb_config
+    kwargs["device_map"] = "auto"
+    kwargs["low_cpu_mem_usage"] = True
+    kwargs["attn_implementation"] = "sdpa" if use_fast_kernels else None
+    config = AutoConfig.from_pretrained(model_name)
+    model = FivegLlamaForCausalLM.from_pretrained(
+        pretrained_model_name_or_path=model_name,
+        config=config, # Load non-quantized parts as FP16
+        **kwargs
     )
     return model
 

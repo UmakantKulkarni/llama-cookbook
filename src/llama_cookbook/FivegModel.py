@@ -65,75 +65,194 @@ class CodeAdapterMLP(nn.Module):
         x = self.up_proj(x)
         return residual + x
 
-
 class DomainAdapter(nn.Module):
     """
-    A multi-head attention-based adapter for 5G knowledge.
-    We use a down-projection to a smaller dimension (adapter_size),
-    run a self-attention there, then up-project back to hidden_size.
+    A multi-head attention-based adapter for 5G knowledge (Modified for Quantization Compatibility).
+    Uses manual MHA implementation with F.scaled_dot_product_attention.
+    Internal projections (Q, K, V, O within attention) should be kept in float16/float32
+    by adding "DomainAdapter" to modules_to_not_convert in BitsAndBytesConfig.
     """
     def __init__(self, hidden_size: int, adapter_size: int = 64, num_heads: int = 4):
         super().__init__()
+        if adapter_size % num_heads != 0:
+            raise ValueError(
+                f"adapter_size {adapter_size} must be divisible by num_heads {num_heads}"
+            )
+
+        self.head_dim = adapter_size // num_heads
+        self.num_heads = num_heads
+        self.adapter_size = adapter_size
+
+        # LN normalizes the input before we do anything
+        self.layernorm = nn.LayerNorm(hidden_size) # LayerNorm often kept in higher precision
+
+        # Down-project from hidden_size -> adapter_size
+        # This might be quantized by bitsandbytes if not excluded
+        self.down_proj = nn.Linear(hidden_size, adapter_size, bias=False)
+
+        # --- Manual Multi-Head Attention Projections ---
+        # These standard nn.Linear layers will NOT be quantized if "DomainAdapter"
+        # is added to modules_to_not_convert during inference loading.
+        self.q_proj = nn.Linear(adapter_size, adapter_size, bias=True)
+        self.k_proj = nn.Linear(adapter_size, adapter_size, bias=True)
+        self.v_proj = nn.Linear(adapter_size, adapter_size, bias=True)
+        self.o_proj = nn.Linear(adapter_size, adapter_size, bias=True)
+        # --- End Manual MHA Projections ---
+
+        # Up-project back to hidden_size
+        # This might be quantized by bitsandbytes if not excluded
+        self.up_proj = nn.Linear(adapter_size, hidden_size, bias=False)
+
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        # Standard initialization similar to nn.Linear and nn.MultiheadAttention
+        for proj in [self.q_proj, self.k_proj, self.v_proj, self.o_proj]:
+            nn.init.xavier_uniform_(proj.weight)
+            if proj.bias is not None:
+                nn.init.constant_(proj.bias, 0.)
+
+    def _split_heads(self, tensor: torch.Tensor) -> torch.Tensor:
+        """
+        Splits hidden_size dim into nh * hs.
+        Input: (B, L, E=num_heads*head_dim)
+        Output: (B, nh, L, hs)
+        """
+        batch_size, seq_length, _ = tensor.size()
+        return tensor.view(batch_size, seq_length, self.num_heads, self.head_dim).transpose(1, 2)
+
+    def _combine_heads(self, tensor: torch.Tensor) -> torch.Tensor:
+        """
+        Merges nh * hs dims back to E.
+        Input: (B, nh, L, hs)
+        Output: (B, L, E=num_heads*head_dim)
+        """
+        batch_size, _, seq_length, _ = tensor.size()
+        return tensor.transpose(1, 2).contiguous().view(batch_size, seq_length, self.adapter_size)
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        # Ensure input is in the correct dtype for the LayerNorm
+        input_dtype = hidden_states.dtype
+        adapter_compute_dtype = self.q_proj.weight.dtype # Dtype of internal non-quantized layers (e.g., fp16)
+
+        # Step 1) LN + residual handle
+        residual = hidden_states
+        # LayerNorm might operate in FP32 for stability, check its weight dtype
+        x = self.layernorm(hidden_states.to(self.layernorm.weight.dtype)).to(input_dtype) # Cast input, cast output back
+
+        # Step 2) Down project to smaller dimension
+        # down_proj might be quantized (Linear4bit), output should match compute_dtype (e.g., FP16)
+        x = self.down_proj(x)
+
+        # --- Manual MHA ---
+        # Ensure x is in the adapter's compute dtype (FP16) before internal projections
+        x_adapter_dtype = x.to(adapter_compute_dtype)
+
+        # Project Q, K, V (using non-quantized layers)
+        q = self.q_proj(x_adapter_dtype)
+        k = self.k_proj(x_adapter_dtype)
+        v = self.v_proj(x_adapter_dtype)
+
+        # Split heads
+        q = self._split_heads(q) # (B, nh, L, hs)
+        k = self._split_heads(k) # (B, nh, L, hs)
+        v = self._split_heads(v) # (B, nh, L, hs)
+
+        # Apply Scaled Dot Product Attention
+        attn_output = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False)
+
+        # Combine heads
+        attn_output = self._combine_heads(attn_output) # (B, L, adapter_size)
+
+        # Output projection (using non-quantized layer)
+        attn_output = self.o_proj(attn_output)
+        # --- End Manual MHA ---
+
+        # Step 4) Up project back to hidden_size
+        # up_proj might be quantized, input needs to match its expected dtype (likely adapter_compute_dtype)
+        # The output will be in the compute_dtype (e.g., FP16)
+        x = self.up_proj(attn_output.to(self.up_proj.weight.dtype if hasattr(self.up_proj, 'weight') else adapter_compute_dtype))
+
+        # Step 5) Residual
+        # Ensure residual add is done in the original input dtype
+        return residual + x.to(input_dtype)
+
+
+class CodeAdapter(nn.Module):
+    """
+    A multi-head attention-based adapter for code (Modified for Quantization Compatibility).
+    Uses manual MHA implementation with F.scaled_dot_product_attention.
+    Internal projections (Q, K, V, O within attention) should be kept in float16/float32
+    by adding "CodeAdapter" to modules_to_not_convert in BitsAndBytesConfig.
+    """
+    def __init__(self, hidden_size: int, adapter_size: int = 64, num_heads: int = 4):
+        super().__init__()
+        if adapter_size % num_heads != 0:
+            raise ValueError(
+                f"adapter_size {adapter_size} must be divisible by num_heads {num_heads}"
+            )
+
+        self.head_dim = adapter_size // num_heads
+        self.num_heads = num_heads
+        self.adapter_size = adapter_size
+
         # LN normalizes the input before we do anything
         self.layernorm = nn.LayerNorm(hidden_size)
 
         # Down-project from hidden_size -> adapter_size
         self.down_proj = nn.Linear(hidden_size, adapter_size, bias=False)
 
-        # A multi-head self-attention at the adapter dimension.
-        # We use PyTorch's MultiheadAttention. Must set batch_first=True
-        # so shapes remain (B, L, E).
-        self.attn = nn.MultiheadAttention(embed_dim=adapter_size,
-                                          num_heads=num_heads,
-                                          batch_first=True)
+        # --- Manual Multi-Head Attention Projections ---
+        self.q_proj = nn.Linear(adapter_size, adapter_size, bias=True)
+        self.k_proj = nn.Linear(adapter_size, adapter_size, bias=True)
+        self.v_proj = nn.Linear(adapter_size, adapter_size, bias=True)
+        self.o_proj = nn.Linear(adapter_size, adapter_size, bias=True)
+        # --- End Manual MHA Projections ---
 
         # Up-project back to hidden_size
         self.up_proj = nn.Linear(adapter_size, hidden_size, bias=False)
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        # Step 1) LN + residual handle
-        residual = hidden_states
-        x = self.layernorm(hidden_states)   # shape: (B, L, hidden_size)
-        
-        # Step 2) Down project to smaller dimension
-        x = self.down_proj(x)               # shape: (B, L, adapter_size)
-        
-        # Step 3) Multi-Head Self-Attention in adapter space
-        #   attn wants (B, L, E) => Q, K, V are all x
-        #   returns (B, L, E), _
-        attn_out, _ = self.attn(x, x, x, need_weights=False)
-        attn_out = attn_out.clone()
-        
-        # Step 4) Up project back to hidden_size
-        x = self.up_proj(attn_out)
+        self._reset_parameters()
 
-        # Step 5) Residual
-        return residual + x
+    def _reset_parameters(self):
+        for proj in [self.q_proj, self.k_proj, self.v_proj, self.o_proj]:
+            nn.init.xavier_uniform_(proj.weight)
+            if proj.bias is not None:
+                nn.init.constant_(proj.bias, 0.)
 
+    def _split_heads(self, tensor: torch.Tensor) -> torch.Tensor:
+        batch_size, seq_length, _ = tensor.size()
+        return tensor.view(batch_size, seq_length, self.num_heads, self.head_dim).transpose(1, 2)
 
-class CodeAdapter(nn.Module):
-    """
-    A multi-head attention-based adapter specialized for code.
-    Same overall structure as DomainAdapter, but you could vary
-    num_heads or adapter_size if you want it to differ.
-    """
-    def __init__(self, hidden_size: int, adapter_size: int = 64, num_heads: int = 4):
-        super().__init__()
-        self.layernorm = nn.LayerNorm(hidden_size)
-        self.down_proj = nn.Linear(hidden_size, adapter_size, bias=False)
-        self.attn = nn.MultiheadAttention(embed_dim=adapter_size,
-                                          num_heads=num_heads,
-                                          batch_first=True)
-        self.up_proj = nn.Linear(adapter_size, hidden_size, bias=False)
+    def _combine_heads(self, tensor: torch.Tensor) -> torch.Tensor:
+        batch_size, _, seq_length, _ = tensor.size()
+        return tensor.transpose(1, 2).contiguous().view(batch_size, seq_length, self.adapter_size)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        input_dtype = hidden_states.dtype
+        adapter_compute_dtype = self.q_proj.weight.dtype
+
         residual = hidden_states
-        x = self.layernorm(hidden_states)
+        x = self.layernorm(hidden_states.to(self.layernorm.weight.dtype)).to(input_dtype)
         x = self.down_proj(x)
-        attn_out, _ = self.attn(x, x, x, need_weights=False)
-        attn_out = attn_out.clone()
-        x = self.up_proj(attn_out)
-        return residual + x
+
+        x_adapter_dtype = x.to(adapter_compute_dtype)
+        q = self.q_proj(x_adapter_dtype)
+        k = self.k_proj(x_adapter_dtype)
+        v = self.v_proj(x_adapter_dtype)
+
+        q = self._split_heads(q)
+        k = self._split_heads(k)
+        v = self._split_heads(v)
+
+        attn_output = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False)
+
+        attn_output = self._combine_heads(attn_output)
+        attn_output = self.o_proj(attn_output)
+
+        x = self.up_proj(attn_output.to(self.up_proj.weight.dtype if hasattr(self.up_proj, 'weight') else adapter_compute_dtype))
+
+        return residual + x.to(input_dtype)
 
 
 class KnowledgeConditionedAttention(nn.Module):
@@ -671,13 +790,22 @@ class FivegLlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         )
 
         hidden_states = outputs[0]
-        logits = self.lm_head(hidden_states[:, -num_logits_to_keep:, :])
+        # Apply lm_head to the entire hidden_states output from the base model
+        # The generate method handles selecting the correct token(s) for prediction
+        logits = self.lm_head(hidden_states)
+        if num_logits_to_keep > 0:
+            logits = logits[:, -num_logits_to_keep:, :]
 
         loss = None
         if labels is not None:
-            # If needed, ensure shape alignment if num_logits_to_keep != 0
-            # standard cross-entropy
-            loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs)
+            # Standard loss calculation (shift logits and labels)
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            loss_fct = nn.CrossEntropyLoss()
+            shift_logits = shift_logits.view(-1, self.config.vocab_size)
+            shift_labels = shift_labels.view(-1)
+            shift_labels = shift_labels.to(shift_logits.device)
+            loss = loss_fct(shift_logits, shift_labels)
 
         if not return_dict:
             output = (logits,) + outputs[1:]
