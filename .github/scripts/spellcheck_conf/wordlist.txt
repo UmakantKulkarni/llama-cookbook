@@ -1536,3 +1536,7 @@ LlamaParse
 ailabs
 jina
 jinaai
+AppUtils
+ArticleSummarizer
+ModelUtils
+Summarizer
