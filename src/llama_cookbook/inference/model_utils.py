@@ -69,7 +69,7 @@ def load_fiveg_model(model_name, quantization, use_fast_kernels, **kwargs):
     kwargs = {}
     if bnb_config:
         kwargs["quantization_config"] = bnb_config
-    kwargs["device_map"] = "auto"
+    kwargs["device_map"] = "cuda:0"
     kwargs["low_cpu_mem_usage"] = True
     kwargs["attn_implementation"] = "sdpa" if use_fast_kernels else None
     config = AutoConfig.from_pretrained(model_name)

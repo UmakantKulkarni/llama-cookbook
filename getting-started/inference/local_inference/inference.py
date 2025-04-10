@@ -56,6 +56,7 @@ def main(
     print("Model is loaded from HF checkpoints:\n", model)
     if peft_model:
         model = load_peft_model(model, peft_model)
+    model.to("cuda:0")
 
     model.eval()
 
@@ -101,7 +102,7 @@ def main(
         if is_xpu_available():
             batch = {k: v.to("xpu") for k, v in batch.items()}
         else:
-            batch = {k: v.to("cuda") for k, v in batch.items()}
+            batch = {k: v.to("cuda:0") for k, v in batch.items()}
 
         start = time.perf_counter()
         with torch.no_grad():
