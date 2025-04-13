@@ -7,7 +7,7 @@ from dataclasses import dataclass
 @dataclass
 class train_config:
     model_name: str= "meta-llama/Llama-3.1-8B" #"/proj/sfcs-PG0/fiveg_llm/models/hf_model"
-    is_fiveg_model: bool = False
+    is_fiveg_model: bool = True
     continue_pretrain: bool = True
     tokenizer_name: str=None
     enable_fsdp: bool=True # shards model parameters, optimizer states and gradients across DDP ranks
@@ -36,9 +36,9 @@ class train_config:
     use_peft: bool=False # use parameter efficient fine tuning
     from_peft_checkpoint: str="" # if not empty and use_peft=True, will load the peft checkpoint and resume the fine-tuning on that checkpoint
     output_dir: str = "/proj/sfcs-PG0/fiveg_llm/models/cp_output"
-    freeze_layers: bool = False
+    freeze_layers: bool = True
     num_freeze_layers: int = 1
-    freeze_LLM_only: bool = False # Freeze self-attention layers in the language_model. Vision model, multi_modal_projector, cross-attention will be fine-tuned
+    freeze_LLM_only: bool = True # Freeze self-attention layers in the language_model. Vision model, multi_modal_projector, cross-attention will be fine-tuned
     quantization: str = None
     one_gpu: bool = False
     save_model: bool = True
