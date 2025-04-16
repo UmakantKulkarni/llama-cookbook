@@ -129,6 +129,10 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
             total_length = len(train_dataloader)//gradient_accumulation_steps
             pbar = tqdm(colour="blue", desc=f"Training Epoch: {epoch+1}", total=total_length, dynamic_ncols=True)
             with profile(train_config,local_rank) as profile_context:
+                total_samples_seen = 0
+                samples_per_checkpoint = int(0.1 * len(train_dataloader.dataset))
+                next_checkpoint_samples = samples_per_checkpoint
+
                 for step, batch in enumerate(train_dataloader):
                     total_train_steps += 1
                     # stop when the maximum number of training steps is reached
@@ -150,6 +154,27 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
                                 batch[key] = batch[key].to('cuda:0')
                     with autocast():
                         loss = model(**batch).loss
+                    batch_size = batch[next(iter(batch))].size(0)
+                    total_samples_seen += batch_size
+
+                    if total_samples_seen >= next_checkpoint_samples:
+                        print("Saving Intermediate checkpoint at {total_samples_seen} samples")
+                        if train_config.enable_fsdp:
+                            dist.barrier()
+                        if not train_config.enable_fsdp or rank == 0:
+                            print(f"Intermediate checkpoint at {total_samples_seen} samples")
+                        if train_config.use_peft:
+                            save_peft_checkpoint(model, train_config.output_dir, tokenizer)
+                        elif not train_config.enable_fsdp:
+                            save_model_checkpoint(model, train_config.output_dir)
+                        elif fsdp_config.checkpoint_type == StateDictType.FULL_STATE_DICT:
+                            save_fsdp_model_checkpoint_full(model, optimizer, rank, train_config, epoch=epoch)
+                            if train_config.save_optimizer:
+                                save_optimizer_checkpoint(model, optimizer, rank, train_config, epoch=epoch)
+                        elif fsdp_config.checkpoint_type == StateDictType.SHARDED_STATE_DICT:
+                            save_model_and_optimizer_sharded(model, rank, train_config, optim=optimizer if train_config.save_optimizer else None)
+
+                        next_checkpoint_samples += samples_per_checkpoint
                     total_loss += loss.detach().float()
                     loss = loss / gradient_accumulation_steps
                     if train_config.save_metrics:
