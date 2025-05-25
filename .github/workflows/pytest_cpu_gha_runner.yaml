@@ -10,7 +10,7 @@ on:
       runner:
         description: 'GHA Runner Scale Set label to run workflow on.'
         required: true
-        default: ubuntu-20.04
+        default: ubuntu-24.04
 
       debug:
           description: 'Run debugging steps?'
@@ -26,7 +26,7 @@ jobs:
     defaults:
       run:
         shell: bash # default shell to run all steps for a given job.
-    runs-on: ${{ github.event.inputs.runner != '' &&  github.event.inputs.runner || 'ubuntu-20.04' }}
+    runs-on: ${{ github.event.inputs.runner != '' &&  github.event.inputs.runner || 'ubuntu-24.04' }}
     steps:
 
       - name: "[DEBUG] Get runner container OS information"
@@ -70,5 +70,7 @@ jobs:
         id: test_summary
         uses: test-summary/action@v2
         with:
-          paths: "**/*.xml(?<!AndroidManifest\.xml)"
+          paths: |
+            **/*.xml
+            !**/AndroidManifest.xml
         if: always()
