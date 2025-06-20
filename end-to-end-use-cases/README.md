@@ -18,7 +18,7 @@
 
 
 
-## [Building an Intelligent WhatsApp Bot with Llama 4 APIs](./whatsapp-llama4-bot/README.md)
+## [Building an Intelligent WhatsApp Bot with Llama 4 APIs](./whatsapp_llama_4_bot/README.md)
 ### A Step-by-Step Guide
 
 Create a WhatsApp bot that leverages the power of Llama 4 APIs to provide intelligent and interactive responses. This guide will walk you through the process of building a bot that supports text, image, and audio interactions, making it versatile for various use cases.
@@ -46,7 +46,7 @@ Get started with analyzing research papers using Llama4 Maverick today!
 
 
 
-## [Book Character Mind Map With Llama4 Maverick](./book_character_mindmap/README.md)
+## [Book Character Mind Map With Llama4 Maverick](./book-character-mindmap/README.md)
 ### Explore Book Characters and Storylines
 
 Use Llama4 Maverick to process entire books at once and visualize character relationships and storylines.
