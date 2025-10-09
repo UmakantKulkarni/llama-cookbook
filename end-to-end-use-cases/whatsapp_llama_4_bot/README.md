@@ -19,7 +19,7 @@ Welcome to the WhatsApp Llama4 Bot ! This bot leverages the power of the Llama 4
 - **Environment Configuration**: Uses `dotenv` to manage environment variables, keeping sensitive information like API keys secure.
 
 Please refer below a high-level of architecture which explains the integrations :
-![WhatsApp Llama4 Integration Diagram](src/docs/img/WhatApp_Llama4_integration.jpeg)
+![WhatsApp Llama4 Integration Diagram](../../src/docs/img/WhatApp_Llama4_integration.jpeg)
 
 
 

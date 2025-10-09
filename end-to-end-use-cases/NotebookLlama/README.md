@@ -4,11 +4,13 @@
 
 [Listen to audio from the example here](./resources/_podcast.mp3)
 
-This is a guided series of tutorials/notebooks that can be taken as a reference or course to build a PDF to Podcast workflow. 
+This is a guided series of tutorials/notebooks that can be taken as a reference or course to build a PDF to Podcast workflow.
 
 You will also learn from the experiments of using  Text to Speech Models.
 
 It assumes zero knowledge of LLMs, prompting and audio models, everything is covered in their respective notebooks.
+
+[![Follow along with a tutorial video](https://img.youtube.com/vi/RdRgWk8kfJA/maxresdefault.jpg)](https://youtu.be/RdRgWk8kfJA)
 
 ### Outline:
 
@@ -48,7 +50,7 @@ pip install -r requirements.txt
 
 This notebook is used for processing the PDF and processing it using the new Feather light model into a `.txt` file.
 
-Update the first cell with a PDF link that you would like to use. Please decide on a PDF to use for Notebook 1, it can be any link but please remember to update the first cell of the notebook with the right link. 
+Update the first cell with a PDF link that you would like to use. Please decide on a PDF to use for Notebook 1, it can be any link but please remember to update the first cell of the notebook with the right link.
 
 Please try changing the prompts for the `Llama-3.2-1B-Instruct` model and see if you can improve results.
 
@@ -60,7 +62,7 @@ Please try experimenting with the System prompts for the model and see if you ca
 
 - Notebook 3:
 
-This notebook takes the transcript from earlier and prompts `Llama-3.1-8B-Instruct` to add more dramatization and interruptions in the conversations. 
+This notebook takes the transcript from earlier and prompts `Llama-3.1-8B-Instruct` to add more dramatization and interruptions in the conversations.
 
 There is also a key factor here: we return a tuple of conversation which makes our lives easier later. Yes, studying Data Structures 101 was actually useful for once!
 
@@ -79,7 +81,7 @@ The speakers and the prompt for parler model were decided based on experimentati
 
 ### Next-Improvements/Further ideas:
 
-- Speech Model experimentation: The TTS model is the limitation of how natural this will sound. This probably be improved with a better pipeline and with the help of someone more knowledgable-PRs are welcome! :) 
+- Speech Model experimentation: The TTS model is the limitation of how natural this will sound. This probably be improved with a better pipeline and with the help of someone more knowledgable-PRs are welcome! :)
 - LLM vs LLM Debate: Another approach of writing the podcast would be having two agents debate the topic of interest and write the podcast outline. Right now we use a single LLM (70B) to write the podcast outline
 - Testing 405B for writing the transcripts
 - Better prompting
@@ -92,4 +94,3 @@ The speakers and the prompt for parler model were decided based on experimentati
 - https://colab.research.google.com/drive/1eJfA2XUa-mXwdMy7DoYKVYHI1iTd9Vkt?usp=sharing#scrollTo=NyYQ--3YksJY
 - https://replicate.com/suno-ai/bark?prediction=zh8j6yddxxrge0cjp9asgzd534
 - https://suno-ai.notion.site/8b8e8749ed514b0cbf3f699013548683?v=bc67cff786b04b50b3ceb756fd05f68c
-

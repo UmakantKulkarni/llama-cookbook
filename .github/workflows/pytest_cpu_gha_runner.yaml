@@ -72,5 +72,4 @@ jobs:
         with:
           paths: |
             **/*.xml
-            !**/AndroidManifest.xml
         if: always()

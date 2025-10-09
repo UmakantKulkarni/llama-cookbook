@@ -1546,3 +1546,13 @@ AGI
 DeepEval
 SDV
 sklearn
+GCP
+compat
+ArtifactExtractor
+DatabaseManager
+DocumentLens
+PDFs
+RequestBuilder
+VectorIndexManager
+csvs
+programmatically
